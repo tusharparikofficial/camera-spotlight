@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS | Drum Kit</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #080810; }
+        body { font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
+        #video { display: none; }
+        #c { display: block; width: 100vw; height: 100vh; cursor: none; }
+        #pair-overlay, #mobile-ui { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(8,8,16,0.95); font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
+        .p-card, .m-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); backdrop-filter: blur(20px); min-width: 320px; }
+        .p-title, .m-title { font-size: 14px; letter-spacing: 4px; opacity: 0.7; margin-bottom: 24px; }
+        .p-code { font-size: 48px; font-weight: bold; letter-spacing: 12px; margin: 20px 0; text-shadow: 0 0 30px rgba(0,255,255,0.5); }
+        .p-status, .m-status { font-size: 12px; margin: 16px 0; color: rgba(0,255,255,0.6); }
+        .m-status.connected { color: #00ff88; }
+        .holo-btn { background: transparent; border: 1px solid rgba(0,255,255,0.4); color: #00ffff; padding: 10px 28px; font-family: inherit; font-size: 13px; cursor: pointer; border-radius: 4px; letter-spacing: 2px; margin: 6px; transition: all 0.2s; }
+        .holo-btn:hover { background: rgba(0,255,255,0.1); border-color: #00ffff; }
+        .holo-btn.danger { border-color: rgba(255,60,60,0.4); color: #ff5555; }
+        .m-input { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 14px 20px; font-family: inherit; font-size: 32px; text-align: center; letter-spacing: 10px; border-radius: 6px; width: 240px; outline: none; }
+        .m-input:focus { border-color: #00ffff; }
+        .m-input::placeholder { color: rgba(0,255,255,0.2); letter-spacing: 2px; font-size: 14px; }
+        #mobile-preview { width: 280px; height: 210px; border-radius: 8px; border: 1px solid rgba(0,255,255,0.2); background: #000; margin: 16px auto; display: none; object-fit: cover; }
+        #mobile-preview.active { display: block; }
+        #cam-choice { display: none; position: fixed; inset: 0; z-index: 150; background: rgba(8,8,16,0.95); }
+        .cc-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); backdrop-filter: blur(20px); }
+        .cc-title { font-size: 14px; letter-spacing: 4px; opacity: 0.7; margin-bottom: 30px; }
+        .cc-buttons { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+        .cc-btn { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 20px 30px; font-family: inherit; font-size: 14px; cursor: pointer; border-radius: 8px; transition: all 0.2s; min-width: 160px; }
+        .cc-btn:hover { background: rgba(0,255,255,0.1); border-color: #00ffff; box-shadow: 0 0 20px rgba(0,255,255,0.2); }
+        .cc-btn .icon { font-size: 32px; display: block; margin-bottom: 10px; }
+        .cc-btn .label { font-size: 11px; opacity: 0.6; margin-top: 6px; display: block; }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="c"></canvas>
+
+    <div id="cam-choice">
+        <div class="cc-card">
+            <div class="cc-title">C H O O S E &nbsp; C A M E R A</div>
+            <div class="cc-buttons">
+                <button class="cc-btn" id="cc-local"><span class="icon">&#x1F4F7;</span>LOCAL CAMERA<span class="label">Use webcam</span></button>
+                <button class="cc-btn" id="cc-phone"><span class="icon">&#x1F4F1;</span>PAIR PHONE<span class="label">Stream from phone</span></button>
+                <button class="cc-btn" id="cc-skip"><span class="icon">&#x2328;</span>KEYBOARD / MOUSE<span class="label">No camera needed</span></button>
+            </div>
+        </div>
+    </div>
+    <div id="pair-overlay">
+        <div class="p-card">
+            <div class="p-title">P A I R &nbsp; D E V I C E</div>
+            <div>Open on phone:</div>
+            <div style="color:#ffaa00;font-size:16px;margin:8px 0;">jarvis.tuxy.online/drums</div>
+            <div style="font-size:11px;opacity:0.4;margin-bottom:16px;">Enter this code:</div>
+            <div class="p-code" id="pair-code-display">------</div>
+            <div class="p-status" id="p-status">Generating...</div>
+            <button class="holo-btn danger" id="pair-cancel">CANCEL</button>
+        </div>
+    </div>
+    <div id="mobile-ui">
+        <div class="m-card">
+            <div class="m-title">J.A.R.V.I.S. &nbsp; D R U M S &nbsp; R E M O T E</div>
+            <video id="mobile-preview" autoplay playsinline muted></video>
+            <div style="margin:16px 0;"><input class="m-input" id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code"></div>
+            <button class="holo-btn" id="pair-connect">C O N N E C T</button>
+            <div class="m-status" id="m-status">Enter 6-digit code from desktop</div>
+        </div>
+    </div>
+
+    <script src="lib/peerjs/peerjs.min.js"></script>
+    <script src="lib/hands/hands.js"></script>
+    <script src="lib/camera_utils/camera_utils.js"></script>
+
+    <script>
+    (function() {
+        'use strict';
+
+        var F = "'Courier New',Consolas,monospace";
+        var PI = Math.PI, TAU = PI * 2;
+
+        // ═══════════════════════════════════════════════════════════
+        // AUDIO ENGINE
+        // ═══════════════════════════════════════════════════════════
+
+        var audioCtx = null;
+        function ensureAudio() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playKick() {
+            ensureAudio(); var now = audioCtx.currentTime;
+            var osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(160, now);
+            osc.frequency.exponentialRampToValueAtTime(25, now + 0.2);
+            g.gain.setValueAtTime(0.8, now);
+            g.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+            osc.connect(g); g.connect(audioCtx.destination);
+            osc.start(now); osc.stop(now + 0.4);
+            // Click layer
+            var osc2 = audioCtx.createOscillator(), g2 = audioCtx.createGain();
+            osc2.type = 'square'; osc2.frequency.value = 40;
+            g2.gain.setValueAtTime(0.3, now); g2.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+            osc2.connect(g2); g2.connect(audioCtx.destination);
+            osc2.start(now); osc2.stop(now + 0.05);
+        }
+
+        function playSnare() {
+            ensureAudio(); var now = audioCtx.currentTime;
+            var len = 0.15, buf = audioCtx.createBuffer(1, audioCtx.sampleRate * len, audioCtx.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+            var src = audioCtx.createBufferSource(); src.buffer = buf;
+            var g = audioCtx.createGain(), flt = audioCtx.createBiquadFilter();
+            flt.type = 'highpass'; flt.frequency.value = 800;
+            g.gain.setValueAtTime(0.5, now); g.gain.exponentialRampToValueAtTime(0.001, now + len);
+            src.connect(flt); flt.connect(g); g.connect(audioCtx.destination);
+            src.start(now); src.stop(now + len);
+            // Body
+            var osc = audioCtx.createOscillator(), g2 = audioCtx.createGain();
+            osc.type = 'triangle'; osc.frequency.setValueAtTime(200, now); osc.frequency.exponentialRampToValueAtTime(80, now + 0.05);
+            g2.gain.setValueAtTime(0.4, now); g2.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+            osc.connect(g2); g2.connect(audioCtx.destination);
+            osc.start(now); osc.stop(now + 0.08);
+        }
+
+        function playHihat(open) {
+            ensureAudio(); var now = audioCtx.currentTime;
+            var len = open ? 0.3 : 0.06;
+            var buf = audioCtx.createBuffer(1, audioCtx.sampleRate * len, audioCtx.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+            var src = audioCtx.createBufferSource(); src.buffer = buf;
+            var g = audioCtx.createGain(), flt = audioCtx.createBiquadFilter();
+            flt.type = 'highpass'; flt.frequency.value = 6000;
+            g.gain.setValueAtTime(open ? 0.25 : 0.2, now);
+            g.gain.exponentialRampToValueAtTime(0.001, now + len);
+            src.connect(flt); flt.connect(g); g.connect(audioCtx.destination);
+            src.start(now); src.stop(now + len);
+        }
+
+        function playTom(freq) {
+            ensureAudio(); var now = audioCtx.currentTime;
+            var osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, now);
+            osc.frequency.exponentialRampToValueAtTime(freq * 0.5, now + 0.2);
+            g.gain.setValueAtTime(0.5, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+            osc.connect(g); g.connect(audioCtx.destination);
+            osc.start(now); osc.stop(now + 0.3);
+        }
+
+        function playCrash() {
+            ensureAudio(); var now = audioCtx.currentTime;
+            var len = 0.8, buf = audioCtx.createBuffer(1, audioCtx.sampleRate * len, audioCtx.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+            var src = audioCtx.createBufferSource(); src.buffer = buf;
+            var g = audioCtx.createGain(), flt = audioCtx.createBiquadFilter();
+            flt.type = 'bandpass'; flt.frequency.value = 4000; flt.Q.value = 0.5;
+            g.gain.setValueAtTime(0.3, now); g.gain.exponentialRampToValueAtTime(0.001, now + len);
+            src.connect(flt); flt.connect(g); g.connect(audioCtx.destination);
+            src.start(now); src.stop(now + len);
+        }
+
+        function playRide() {
+            ensureAudio(); var now = audioCtx.currentTime;
+            var len = 0.4, buf = audioCtx.createBuffer(1, audioCtx.sampleRate * len, audioCtx.sampleRate);
+            var d = buf.getChannelData(0);
+            for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+            var src = audioCtx.createBufferSource(); src.buffer = buf;
+            var g = audioCtx.createGain(), flt = audioCtx.createBiquadFilter();
+            flt.type = 'highpass'; flt.frequency.value = 8000;
+            g.gain.setValueAtTime(0.15, now); g.gain.exponentialRampToValueAtTime(0.001, now + len);
+            src.connect(flt); flt.connect(g); g.connect(audioCtx.destination);
+            src.start(now); src.stop(now + len);
+        }
+
+        function playCowbell() {
+            ensureAudio(); var now = audioCtx.currentTime;
+            var osc = audioCtx.createOscillator(), osc2 = audioCtx.createOscillator();
+            var g = audioCtx.createGain();
+            osc.type = 'square'; osc.frequency.value = 587;
+            osc2.type = 'square'; osc2.frequency.value = 845;
+            g.gain.setValueAtTime(0.2, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+            osc.connect(g); osc2.connect(g); g.connect(audioCtx.destination);
+            osc.start(now); osc2.start(now); osc.stop(now + 0.15); osc2.stop(now + 0.15);
+        }
+
+        function playClap() {
+            ensureAudio(); var now = audioCtx.currentTime;
+            for (var k = 0; k < 3; k++) {
+                var t = now + k * 0.01;
+                var len = 0.04, buf = audioCtx.createBuffer(1, audioCtx.sampleRate * len, audioCtx.sampleRate);
+                var d = buf.getChannelData(0);
+                for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+                var src = audioCtx.createBufferSource(); src.buffer = buf;
+                var g = audioCtx.createGain(), flt = audioCtx.createBiquadFilter();
+                flt.type = 'bandpass'; flt.frequency.value = 1200; flt.Q.value = 1;
+                g.gain.setValueAtTime(0.35, t); g.gain.exponentialRampToValueAtTime(0.001, t + len);
+                src.connect(flt); flt.connect(g); g.connect(audioCtx.destination);
+                src.start(t); src.stop(t + len);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // DRUM PADS
+        // ═══════════════════════════════════════════════════════════
+
+        var PADS = [
+            { name: 'CRASH',    play: playCrash,                key: 'q', color: '#ffaa00', row: 0, col: 0 },
+            { name: 'RIDE',     play: playRide,                 key: 'w', color: '#00ff88', row: 0, col: 1 },
+            { name: 'HI-HAT',  play: function(){playHihat(0);}, key: 'e', color: '#00ffff', row: 0, col: 2 },
+            { name: 'OH HAT',  play: function(){playHihat(1);}, key: 'r', color: '#0088ff', row: 0, col: 3 },
+            { name: 'HIGH TOM',play: function(){playTom(300);}, key: 'a', color: '#aa00ff', row: 1, col: 0 },
+            { name: 'MID TOM', play: function(){playTom(200);}, key: 's', color: '#ff00ff', row: 1, col: 1 },
+            { name: 'SNARE',   play: playSnare,                key: 'd', color: '#ff3355', row: 1, col: 2 },
+            { name: 'CLAP',    play: playClap,                 key: 'f', color: '#ff6600', row: 1, col: 3 },
+            { name: 'KICK',    play: playKick,                 key: ' ', color: '#ffffff', row: 2, col: 1.5 },
+            { name: 'COWBELL', play: playCowbell,              key: 'g', color: '#ffdd00', row: 2, col: 3 },
+        ];
+
+        // ═══════════════════════════════════════════════════════════
+        // STATE
+        // ═══════════════════════════════════════════════════════════
+
+        var S = {
+            canvas: null, ctx: null, w: 0, h: 0,
+            // Pad layout (computed)
+            padRects: [], // { x, y, w, h } per pad
+            // Hit state
+            hits: {}, // padIndex -> { time, intensity }
+            // Ripples
+            ripples: [],
+            // Hit history (timeline)
+            hitHistory: [], // { padIdx, time }
+            // Recording
+            recording: false, recordData: [], recordStart: 0,
+            playingBack: false, playbackTimeout: null,
+            // Camera
+            cameraImage: null, cameraReady: false,
+            handData: null, handTrackingReady: false,
+            // Hand
+            handCursors: [null, null],
+            handPrevInPad: [{}, {}], // per hand, which pads fingers were in last frame
+            // Pairing
+            peer: null, remoteConnected: false, remoteVideo: null,
+            localCamera: null, usingRemoteCamera: false,
+            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+            // Mouse
+            mouseX: -1, mouseY: -1,
+            // FPS
+            fps: 0, frameCount: 0, lastFpsTime: 0,
+            toast: null,
+        };
+
+        // ═══════════════════════════════════════════════════════════
+        // UTILS
+        // ═══════════════════════════════════════════════════════════
+
+        function showToast(t) { S.toast = { text: t, until: performance.now() + 2500 }; }
+        function roundRect(ctx,x,y,w,h,r) {
+            ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
+            ctx.arcTo(x+w,y,x+w,y+r,r); ctx.lineTo(x+w,y+h-r);
+            ctx.arcTo(x+w,y+h,x+w-r,y+h,r); ctx.lineTo(x+r,y+h);
+            ctx.arcTo(x,y+h,x,y+h-r,r); ctx.lineTo(x,y+r);
+            ctx.arcTo(x,y,x+r,y,r); ctx.closePath();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // LAYOUT
+        // ═══════════════════════════════════════════════════════════
+
+        function computeLayout() {
+            var cols = 4, rows = 3;
+            var gap = 14;
+            var totalW = Math.min(S.w * 0.85, 800);
+            var totalH = Math.min(S.h * 0.65, 500);
+            var padW = (totalW - gap * (cols - 1)) / cols;
+            var padH = (totalH - gap * (rows - 1)) / rows;
+            var ox = (S.w - totalW) / 2;
+            var oy = (S.h - totalH) / 2 + 20;
+
+            S.padRects = PADS.map(function(pad) {
+                var cw = pad.name === 'KICK' ? padW * 2 + gap : padW;
+                return {
+                    x: ox + pad.col * (padW + gap),
+                    y: oy + pad.row * (padH + gap),
+                    w: cw,
+                    h: padH,
+                };
+            });
+        }
+
+        function getPadAt(px, py) {
+            for (var i = 0; i < S.padRects.length; i++) {
+                var r = S.padRects[i];
+                if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return i;
+            }
+            return -1;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // TRIGGERING
+        // ═══════════════════════════════════════════════════════════
+
+        function hitPad(idx) {
+            if (idx < 0 || idx >= PADS.length) return;
+            var now = performance.now();
+            // Debounce: don't re-trigger within 60ms
+            if (S.hits[idx] && now - S.hits[idx].time < 60) return;
+            PADS[idx].play();
+            S.hits[idx] = { time: now, intensity: 1 };
+            var r = S.padRects[idx];
+            S.ripples.push({ x: r.x + r.w / 2, y: r.y + r.h / 2, r: 0, maxR: Math.max(r.w, r.h) * 0.7, color: PADS[idx].color, birth: now });
+            S.hitHistory.push({ padIdx: idx, time: now });
+            if (S.hitHistory.length > 60) S.hitHistory.shift();
+            if (S.recording) {
+                S.recordData.push({ idx: idx, time: now - S.recordStart });
+            }
+        }
+
+        function toggleRecord() {
+            if (S.recording) { S.recording = false; showToast('Recorded ' + S.recordData.length + ' hits'); }
+            else { S.recording = true; S.recordData = []; S.recordStart = performance.now(); showToast('Recording...'); }
+        }
+
+        function playbackRecording() {
+            if (S.recordData.length === 0) { showToast('Nothing recorded'); return; }
+            if (S.playingBack) { clearTimeout(S.playbackTimeout); S.playingBack = false; showToast('Stopped'); return; }
+            S.playingBack = true; showToast('Playing back...');
+            var i = 0;
+            function next() {
+                if (i >= S.recordData.length || !S.playingBack) { S.playingBack = false; return; }
+                var ev = S.recordData[i];
+                var delay = i === 0 ? 0 : ev.time - S.recordData[i - 1].time;
+                S.playbackTimeout = setTimeout(function() { hitPad(ev.idx); i++; next(); }, delay);
+            }
+            next();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // GESTURE PROCESSING
+        // ═══════════════════════════════════════════════════════════
+
+        function processGestures(hands) {
+            if (!hands || hands.length === 0) {
+                S.handCursors = [null, null];
+                S.handPrevInPad = [{}, {}];
+                return;
+            }
+
+            for (var hi = 0; hi < Math.min(hands.length, 2); hi++) {
+                var hand = hands[hi];
+                var tips = [4, 8, 12, 16, 20];
+                var fingerPos = tips.map(function(idx) {
+                    return { x: (1 - hand[idx].x) * S.w, y: hand[idx].y * S.h };
+                });
+
+                // Smooth cursor from index tip
+                var raw = fingerPos[1];
+                if (!S.handCursors[hi]) S.handCursors[hi] = { x: raw.x, y: raw.y };
+                S.handCursors[hi].x += (raw.x - S.handCursors[hi].x) * 0.5;
+                S.handCursors[hi].y += (raw.y - S.handCursors[hi].y) * 0.5;
+
+                // Check each fingertip against pads
+                // Trigger on ENTER (finger moves into pad that it wasn't in before)
+                var currentInPad = {};
+                fingerPos.forEach(function(fp, fi) {
+                    var padIdx = getPadAt(fp.x, fp.y);
+                    if (padIdx >= 0) {
+                        var padKey = padIdx + '_' + fi;
+                        currentInPad[padKey] = padIdx;
+                        // Was this finger NOT in this pad last frame?
+                        if (!S.handPrevInPad[hi][padKey]) {
+                            hitPad(padIdx);
+                        }
+                    }
+                });
+                S.handPrevInPad[hi] = currentInPad;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // DRAWING
+        // ═══════════════════════════════════════════════════════════
+
+        function drawPads(ctx, time) {
+            PADS.forEach(function(pad, i) {
+                var r = S.padRects[i];
+                var hit = S.hits[i];
+                var active = hit && (time - hit.time) < 250;
+                var decay = active ? 1 - (time - hit.time) / 250 : 0;
+
+                ctx.save();
+
+                // Background with hit flash
+                if (active) {
+                    ctx.fillStyle = pad.color;
+                    ctx.globalAlpha = decay * 0.35;
+                    roundRect(ctx, r.x, r.y, r.w, r.h, 12);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+
+                // Border
+                ctx.strokeStyle = pad.color;
+                ctx.lineWidth = active ? 3 : 1.5;
+                ctx.shadowColor = pad.color;
+                ctx.shadowBlur = active ? 25 + decay * 20 : 8;
+                roundRect(ctx, r.x, r.y, r.w, r.h, 12);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Inner fill
+                ctx.fillStyle = 'rgba(0,10,20,0.6)';
+                roundRect(ctx, r.x, r.y, r.w, r.h, 12);
+                ctx.fill();
+
+                // Scale on hit
+                var scale = active ? 1 + decay * 0.04 : 1;
+                ctx.translate(r.x + r.w / 2, r.y + r.h / 2);
+                ctx.scale(scale, scale);
+
+                // Pad name
+                ctx.font = 'bold 16px ' + F;
+                ctx.fillStyle = active ? pad.color : 'rgba(255,255,255,0.6)';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(pad.name, 0, -8);
+
+                // Key hint
+                ctx.font = '11px ' + F;
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                var keyLabel = pad.key === ' ' ? 'SPACE' : pad.key.toUpperCase();
+                ctx.fillText(keyLabel, 0, 14);
+
+                // Hit indicator dot
+                if (active) {
+                    ctx.beginPath();
+                    ctx.arc(0, r.h / 2 - 18, 4 + decay * 4, 0, TAU);
+                    ctx.fillStyle = pad.color;
+                    ctx.globalAlpha = decay;
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            });
+        }
+
+        function drawRipples(ctx, time) {
+            for (var i = S.ripples.length - 1; i >= 0; i--) {
+                var rip = S.ripples[i];
+                var age = (time - rip.birth) / 500;
+                if (age > 1) { S.ripples.splice(i, 1); continue; }
+                ctx.save();
+                ctx.strokeStyle = rip.color;
+                ctx.globalAlpha = (1 - age) * 0.4;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(rip.x, rip.y, rip.maxR * age, 0, TAU);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        function drawTimeline(ctx, time) {
+            // Show recent hits as a scrolling timeline at the bottom
+            var y = S.h - 50;
+            var cx = S.w / 2;
+            ctx.save();
+            ctx.globalAlpha = 0.5;
+
+            S.hitHistory.forEach(function(h) {
+                var age = (time - h.time) / 4000;
+                if (age > 1) return;
+                var x = cx + (0.5 - age) * S.w * 0.8;
+                var alpha = age < 0.1 ? age / 0.1 : (1 - age);
+                var pad = PADS[h.padIdx];
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, TAU);
+                ctx.fillStyle = pad.color;
+                ctx.globalAlpha = alpha * 0.6;
+                ctx.fill();
+                ctx.font = '7px ' + F;
+                ctx.fillStyle = pad.color;
+                ctx.textAlign = 'center';
+                ctx.fillText(pad.name, x, y - 8);
+            });
+
+            // Timeline line
+            ctx.globalAlpha = 0.1;
+            ctx.strokeStyle = '#00ffff';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(cx - S.w * 0.4, y);
+            ctx.lineTo(cx + S.w * 0.4, y);
+            ctx.stroke();
+
+            // Now marker
+            ctx.globalAlpha = 0.6;
+            ctx.fillStyle = '#00ffff';
+            ctx.beginPath();
+            ctx.moveTo(cx, y - 6);
+            ctx.lineTo(cx - 4, y + 2);
+            ctx.lineTo(cx + 4, y + 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawHandTracking(ctx, hands) {
+            if (!hands || hands.length === 0) return;
+            var w = S.w, h = S.h;
+            var conns = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+            hands.forEach(function(hand) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(0,255,255,0.12)'; ctx.lineWidth = 1;
+                conns.forEach(function(p) {
+                    ctx.beginPath(); ctx.moveTo((1-hand[p[0]].x)*w, hand[p[0]].y*h);
+                    ctx.lineTo((1-hand[p[1]].x)*w, hand[p[1]].y*h); ctx.stroke();
+                });
+                [4,8,12,16,20].forEach(function(idx) {
+                    var fx = (1-hand[idx].x)*w, fy = hand[idx].y*h;
+                    ctx.beginPath(); ctx.arc(fx, fy, 5, 0, TAU);
+                    ctx.fillStyle = '#00ffff'; ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 12;
+                    ctx.fill(); ctx.shadowBlur = 0;
+                });
+                ctx.restore();
+            });
+        }
+
+        function drawHUD(ctx, w, h, time) {
+            var s = 25, o = 10;
+            ctx.strokeStyle = 'rgba(0,255,255,0.25)'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(o,o+s); ctx.lineTo(o,o); ctx.lineTo(o+s,o); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w-o-s,o); ctx.lineTo(w-o,o); ctx.lineTo(w-o,o+s); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(o,h-o-s); ctx.lineTo(o,h-o); ctx.lineTo(o+s,h-o); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w-o-s,h-o); ctx.lineTo(w-o,h-o); ctx.lineTo(w-o,h-o-s); ctx.stroke();
+
+            // Scan line
+            var sy = ((time % 5000) / 5000) * h;
+            ctx.save();
+            var grad = ctx.createLinearGradient(0,sy-25,0,sy+25);
+            grad.addColorStop(0,'transparent'); grad.addColorStop(0.5,'rgba(0,255,255,0.03)'); grad.addColorStop(1,'transparent');
+            ctx.fillStyle = grad; ctx.fillRect(0,sy-25,w,50);
+            ctx.restore();
+
+            // Title
+            ctx.save();
+            ctx.font = '12px ' + F; ctx.fillStyle = '#00ffff'; ctx.globalAlpha = 0.5;
+            ctx.textAlign = 'center'; ctx.fillText('J.A.R.V.I.S.  DRUM KIT', w/2, 22);
+            ctx.restore();
+
+            // Record indicator
+            ctx.save(); ctx.textAlign = 'right';
+            if (S.recording) {
+                var pulse = Math.sin(time / 300) * 0.3 + 0.7;
+                ctx.fillStyle = 'rgba(255,50,50,' + pulse + ')';
+                ctx.beginPath(); ctx.arc(w - 80, 20, 5, 0, TAU); ctx.fill();
+                ctx.font = '10px ' + F; ctx.fillStyle = '#ff3355';
+                ctx.fillText('REC', w - 14, 24);
+            } else if (S.recordData.length > 0) {
+                ctx.font = '10px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.fillText(S.recordData.length + ' hits saved', w - 14, 24);
+            }
+            ctx.restore();
+
+            // Bottom hints
+            ctx.save();
+            ctx.font = '9px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.globalAlpha = 0.6;
+            ctx.textAlign = 'left';
+            ctx.fillText('FPS:' + S.fps + '  CAM:' + (S.usingRemoteCamera ? 'PHONE' : (S.cameraReady ? 'LOCAL' : 'OFF')), 14, h - 12);
+            ctx.textAlign = 'right';
+            ctx.fillText('R=Record  Space=Playback  |  Touch pads with fingertips', w - 14, h - 12);
+            ctx.restore();
+        }
+
+        function drawToast(ctx, w, time) {
+            if (!S.toast || time > S.toast.until) return;
+            var rem = S.toast.until - time;
+            ctx.save(); ctx.globalAlpha = rem < 500 ? rem/500 : 1;
+            ctx.font = '13px ' + F; ctx.textAlign = 'center';
+            var tw = ctx.measureText(S.toast.text).width + 40;
+            ctx.fillStyle = 'rgba(0,20,40,0.85)';
+            roundRect(ctx, w/2-tw/2, 45, tw, 28, 4); ctx.fill();
+            ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 1; ctx.stroke();
+            ctx.fillStyle = '#00ffff'; ctx.fillText(S.toast.text, w/2, 64);
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RENDER LOOP
+        // ═══════════════════════════════════════════════════════════
+
+        function renderLoop(ts) {
+            var ctx = S.ctx, w = S.w, h = S.h;
+            S.frameCount++;
+            if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
+
+            ctx.fillStyle = '#080810'; ctx.fillRect(0, 0, w, h);
+
+            if (S.cameraImage) {
+                ctx.save(); ctx.globalAlpha = 0.08;
+                ctx.translate(w, 0); ctx.scale(-1, 1);
+                ctx.drawImage(S.cameraImage, 0, 0, w, h);
+                ctx.restore();
+            }
+
+            drawHUD(ctx, w, h, ts);
+            drawPads(ctx, ts);
+            drawRipples(ctx, ts);
+            drawTimeline(ctx, ts);
+            if (S.handData) drawHandTracking(ctx, S.handData);
+
+            // Hand cursors
+            S.handCursors.forEach(function(cur) {
+                if (!cur) return;
+                var t = ts * 0.004;
+                ctx.save();
+                ctx.strokeStyle = 'rgba(0,255,255,0.4)'; ctx.lineWidth = 1.5;
+                for (var i = 0; i < 4; i++) {
+                    ctx.beginPath(); ctx.arc(cur.x, cur.y, 14, t+i*PI/2, t+i*PI/2+PI/4); ctx.stroke();
+                }
+                ctx.beginPath(); ctx.arc(cur.x, cur.y, 3, 0, TAU);
+                ctx.fillStyle = '#00ffff'; ctx.fill();
+                ctx.restore();
+            });
+
+            drawToast(ctx, w, ts);
+            requestAnimationFrame(renderLoop);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INPUT
+        // ═══════════════════════════════════════════════════════════
+
+        var keyToPad = {};
+        PADS.forEach(function(p, i) { keyToPad[p.key] = i; });
+
+        function initInput() {
+            window.addEventListener('keydown', function(e) {
+                var k = e.key.toLowerCase();
+                if (k === ' ') {
+                    // Space is both KICK and playback toggle - use R for record
+                    if (e.shiftKey) { e.preventDefault(); playbackRecording(); return; }
+                    e.preventDefault();
+                    hitPad(keyToPad[' ']);
+                    return;
+                }
+                if (k in keyToPad) { hitPad(keyToPad[k]); return; }
+                if (k === 'r') toggleRecord();
+                if (k === 'p') { e.preventDefault(); playbackRecording(); }
+            });
+
+            S.canvas.addEventListener('mousedown', function(e) {
+                ensureAudio();
+                var idx = getPadAt(e.clientX, e.clientY);
+                if (idx >= 0) hitPad(idx);
+            });
+            S.canvas.addEventListener('mousemove', function(e) {
+                S.mouseX = e.clientX; S.mouseY = e.clientY;
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // MEDIAPIPE
+        // ═══════════════════════════════════════════════════════════
+
+        var mpHands;
+        try {
+            mpHands = new Hands({ locateFile: function(f) { return 'lib/hands/' + f; } });
+            mpHands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
+            mpHands.onResults(function(results) {
+                S.cameraImage = results.image; S.cameraReady = true;
+                S.handData = results.multiHandLandmarks && results.multiHandLandmarks.length > 0 ? results.multiHandLandmarks : null;
+                if (S.handData) processGestures(S.handData);
+                if (!S.handTrackingReady) { S.handTrackingReady = true; showToast('Hand tracking online — drum with your fingers!'); }
+            });
+        } catch(e) { console.warn('MediaPipe init failed:', e); }
+
+        // ═══════════════════════════════════════════════════════════
+        // PAIRING
+        // ═══════════════════════════════════════════════════════════
+
+        function generatePairCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
+        function startPairing() {
+            var code = generatePairCode();
+            document.getElementById('pair-code-display').textContent = code;
+            document.getElementById('p-status').textContent = 'Waiting...';
+            document.getElementById('pair-overlay').style.display = 'block';
+            if (S.peer) S.peer.destroy();
+            S.peer = new Peer('jdrum-' + code);
+            S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active...'; });
+            S.peer.on('error', function(err) { document.getElementById('p-status').textContent = 'Error: ' + err.type; });
+            S.peer.on('call', function(call) {
+                call.answer();
+                call.on('stream', function(rs) { onRemoteCam(rs); document.getElementById('pair-overlay').style.display = 'none'; });
+                call.on('close', function() { offRemoteCam(); });
+            });
+        }
+        function cancelPairing() { document.getElementById('pair-overlay').style.display = 'none'; if (S.peer) { S.peer.destroy(); S.peer = null; } }
+        function onRemoteCam(stream) {
+            S.remoteVideo = document.createElement('video');
+            S.remoteVideo.srcObject = stream; S.remoteVideo.autoplay = true; S.remoteVideo.playsInline = true; S.remoteVideo.muted = true; S.remoteVideo.play();
+            if (S.localCamera && S.localCamera.stop) S.localCamera.stop();
+            S.usingRemoteCamera = true; S.remoteConnected = true;
+            S.remoteVideo.onloadeddata = function() { processRemote(); };
+            showToast('Phone connected!');
+        }
+        function processRemote() {
+            if (!S.usingRemoteCamera || !S.remoteVideo) return;
+            if (mpHands) mpHands.send({ image: S.remoteVideo }).then(function() { if (S.usingRemoteCamera) requestAnimationFrame(processRemote); });
+        }
+        function offRemoteCam() {
+            S.usingRemoteCamera = false; S.remoteConnected = false;
+            if (S.remoteVideo) { S.remoteVideo.srcObject = null; S.remoteVideo = null; }
+            startLocalCam(); showToast('Phone disconnected');
+        }
+        function startLocalCam() {
+            var video = document.getElementById('video');
+            if (mpHands) {
+                S.localCamera = new Camera(video, { onFrame: function() { return mpHands.send({ image: video }); }, width: 640, height: 480 });
+                S.localCamera.start().then(function() { showToast('Camera online'); }).catch(function() { showToast('No camera'); });
+            }
+        }
+        function initMobileUI() {
+            document.getElementById('mobile-ui').style.display = 'block';
+            document.getElementById('c').style.display = 'none';
+            document.getElementById('pair-connect').onclick = function() {
+                var code = document.getElementById('pair-input').value.trim();
+                if (code.length !== 6) { document.getElementById('m-status').textContent = 'Enter 6 digits'; return; }
+                connectMobile(code);
+            };
+            document.getElementById('pair-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('pair-connect').click(); });
+        }
+        function connectMobile(code) {
+            var st = document.getElementById('m-status'), pv = document.getElementById('mobile-preview');
+            st.textContent = 'Connecting...';
+            var peer = new Peer();
+            peer.on('open', function() {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: {ideal:640}, height: {ideal:480} }, audio: false })
+                .then(function(stream) {
+                    pv.srcObject = stream; pv.classList.add('active');
+                    var call = peer.call('jdrum-' + code, stream);
+                    if (!call) { st.textContent = 'Failed'; return; }
+                    st.textContent = 'Streaming...'; st.className = 'm-status connected';
+                    var btn = document.getElementById('pair-connect');
+                    btn.textContent = 'DISCONNECT'; btn.className = 'holo-btn danger';
+                    btn.onclick = function() { call.close(); stream.getTracks().forEach(function(t){t.stop();}); pv.srcObject=null; pv.classList.remove('active'); st.textContent='Disconnected'; st.className='m-status'; btn.textContent='CONNECT'; btn.className='holo-btn'; btn.onclick=function(){var c=document.getElementById('pair-input').value.trim();if(c.length===6)connectMobile(c);}; peer.destroy(); };
+                }).catch(function(err) { st.textContent = 'Camera: ' + err.message; });
+            });
+            peer.on('error', function(err) { st.textContent = 'Failed: ' + err.type; });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════════════
+
+        function init() {
+            if (S.isMobile) { initMobileUI(); return; }
+
+            S.canvas = document.getElementById('c');
+            S.ctx = S.canvas.getContext('2d');
+
+            function resize() {
+                S.w = window.innerWidth; S.h = window.innerHeight;
+                S.canvas.width = S.w; S.canvas.height = S.h;
+                computeLayout();
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            initInput();
+
+            document.getElementById('cam-choice').style.display = 'block';
+            document.getElementById('cc-local').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; ensureAudio(); startLocalCam(); };
+            document.getElementById('cc-phone').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; ensureAudio(); startPairing(); };
+            document.getElementById('cc-skip').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; ensureAudio(); showToast('Keyboard + mouse mode'); };
+            document.getElementById('pair-cancel').onclick = cancelPairing;
+
+            S.lastFpsTime = performance.now();
+            requestAnimationFrame(renderLoop);
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>
