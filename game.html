@@ -175,10 +175,10 @@
             [[0,0,7],[7,7,7],[0,0,0]], // L
         ];
 
-        var DROP_INTERVAL = 800; // ms
+        var DROP_INTERVAL = 1200; // ms - slow start, gives time to think
         var SOFT_DROP_INTERVAL = 50;
-        var LOCK_DELAY = 500;
-        var GESTURE_COOLDOWN = 8; // frames
+        var LOCK_DELAY = 600;
+        var GESTURE_COOLDOWN = 10; // frames
 
         // ═══════════════════════════════════════════════════════════
         // STATE
@@ -312,7 +312,7 @@
                 G.score += pts;
                 G.lines += cleared.length;
                 G.level = Math.floor(G.lines / 10) + 1;
-                G.dropInterval = Math.max(100, DROP_INTERVAL - (G.level - 1) * 60);
+                G.dropInterval = Math.max(200, DROP_INTERVAL - (G.level - 1) * 50);
 
                 setTimeout(function() {
                     cleared.sort(function(a,b){return a-b;});
@@ -440,6 +440,12 @@
             return isFingerExtended(hand, 8, 6) && isFingerExtended(hand, 12, 10) &&
                    isFingerExtended(hand, 16, 14) && isFingerExtended(hand, 20, 18);
         }
+        function isThumbsUp(hand) {
+            var thumbTip = hand[4], indexMcp = hand[5], thumbMcp = hand[2];
+            return (indexMcp.y - thumbTip.y) > 0.06 && (thumbMcp.y - thumbTip.y) > 0.04 &&
+                   isFingerCurled(hand, 8, 6) && isFingerCurled(hand, 12, 10) &&
+                   isFingerCurled(hand, 16, 14) && isFingerCurled(hand, 20, 18);
+        }
 
         // ═══════════════════════════════════════════════════════════
         // HAND GESTURE → TETRIS CONTROLS
@@ -461,6 +467,18 @@
             if (!G.handCursor) G.handCursor = { x: ix, y: iy };
             G.handCursor.x += (ix - G.handCursor.x) * 0.4;
             G.handCursor.y += (iy - G.handCursor.y) * 0.4;
+
+            // ── THUMBS UP = Start / Restart ──
+            var thumbUp = isThumbsUp(h);
+            if (thumbUp && !G.handPrevThumb) {
+                if (!G.playing || G.gameOver) {
+                    startGame();
+                    G.handGestureCd = GESTURE_COOLDOWN * 3;
+                    G.handPrevThumb = true;
+                    return;
+                }
+            }
+            G.handPrevThumb = thumbUp;
 
             if (!G.playing || G.paused || G.gameOver) return;
             if (G.handGestureCd > 0) { G.handGestureCd--; return; }
@@ -489,24 +507,27 @@
             if (G.handPrevX !== null) {
                 var dx = wristX - G.handPrevX;
                 G.handSwipeAccum += dx;
-                var threshold = CELL * 1.2;
+                var threshold = CELL * 2;
                 if (Math.abs(G.handSwipeAccum) > threshold) {
                     movePiece(G.handSwipeAccum > 0 ? 1 : -1);
                     G.handSwipeAccum = 0;
-                    G.handGestureCd = 3;
+                    G.handGestureCd = 4;
                 }
             }
             G.handPrevX = wristX;
 
-            // ── VERTICAL SWIPE DOWN = Soft drop ──
+            // ── VERTICAL SWIPE DOWN = Soft drop (needs big deliberate push) ──
             if (G.handPrevY !== null) {
                 var dy = wristY - G.handPrevY;
-                G.handDropAccum += dy;
-                if (G.handDropAccum > CELL * 0.8) {
+                // Only accumulate clearly downward movements
+                if (dy > 2) G.handDropAccum += dy;
+                // Decay slowly so small jitter doesn't build up
+                else G.handDropAccum *= 0.8;
+                if (G.handDropAccum > CELL * 3) {
                     softDrop();
                     G.handDropAccum = 0;
+                    G.handGestureCd = 4;
                 }
-                if (G.handDropAccum < 0) G.handDropAccum = 0;
             }
             G.handPrevY = wristY;
 
@@ -665,14 +686,15 @@
             ctx.fillStyle = COLORS.dim;
             ctx.globalAlpha = 0.6;
             var guide = [
-                'HAND: Swipe L/R = Move',
-                'HAND: Swipe Down = Drop',
-                'HAND: Fist = Rotate',
-                'HAND: Pinch = Hard Drop',
+                'HAND CONTROLS:',
+                'Swipe L/R = Move',
+                'Push Down = Soft Drop',
+                'Fist = Rotate',
+                'Pinch = Hard Drop',
+                'Thumbs Up = Start',
                 '',
-                'KEYS: Arrows / WASD',
-                'SPACE = Hard Drop',
-                'UP/W = Rotate',
+                'KEYBOARD:',
+                'Arrows/WASD + Space',
             ];
             guide.forEach(function(line, i) {
                 ctx.fillText(line, gx, gy + i * 14);
@@ -790,7 +812,7 @@
             ctx.fillText('SCORE: ' + G.score, w / 2, h / 2 + 10);
             ctx.font = '12px ' + FONT;
             ctx.fillStyle = COLORS.dim;
-            ctx.fillText('Press ENTER or PINCH to restart', w / 2, h / 2 + 40);
+            ctx.fillText('Press ENTER or show THUMBS UP to restart', w / 2, h / 2 + 40);
             ctx.restore();
         }
 
@@ -806,7 +828,7 @@
             ctx.fillStyle = COLORS.dim;
             var pulse = Math.sin(time / 500) * 0.3 + 0.7;
             ctx.globalAlpha = pulse;
-            ctx.fillText('Press ENTER or PINCH to start', w / 2, h / 2 + 10);
+            ctx.fillText('Press ENTER or show THUMBS UP to start', w / 2, h / 2 + 10);
             ctx.globalAlpha = 1;
             ctx.font = '11px ' + FONT;
             ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -1084,8 +1106,8 @@
             function resize() {
                 G.w = window.innerWidth; G.h = window.innerHeight;
                 G.canvas.width = G.w; G.canvas.height = G.h;
-                CELL = Math.floor(Math.min(G.h * 0.85 / ROWS, G.w * 0.35 / COLS));
-                G.boardX = Math.floor((G.w - COLS * CELL) / 2);
+                CELL = Math.floor(Math.min(G.h * 0.92 / ROWS, G.w * 0.55 / COLS));
+                G.boardX = Math.floor((G.w - COLS * CELL) / 2 - 40);
                 G.boardY = Math.floor((G.h - ROWS * CELL) / 2);
             }
             window.addEventListener('resize', resize);
