@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS | Air Hockey</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #080810; }
+        body { font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
+        #video { display: none; }
+        #c { display: block; width: 100vw; height: 100vh; cursor: none; }
+
+        /* Pairing / camera choice UI - same as game.html */
+        #pair-overlay, #mobile-ui { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(8,8,16,0.95); font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
+        .p-card, .m-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); backdrop-filter: blur(20px); min-width: 320px; }
+        .p-title, .m-title { font-size: 14px; letter-spacing: 4px; opacity: 0.7; margin-bottom: 24px; }
+        .p-code { font-size: 48px; font-weight: bold; letter-spacing: 12px; margin: 20px 0; text-shadow: 0 0 30px rgba(0,255,255,0.5); }
+        .p-status, .m-status { font-size: 12px; margin: 16px 0; color: rgba(0,255,255,0.6); }
+        .m-status.connected { color: #00ff88; }
+        .holo-btn { background: transparent; border: 1px solid rgba(0,255,255,0.4); color: #00ffff; padding: 10px 28px; font-family: inherit; font-size: 13px; cursor: pointer; border-radius: 4px; letter-spacing: 2px; margin: 6px; transition: all 0.2s; }
+        .holo-btn:hover { background: rgba(0,255,255,0.1); border-color: #00ffff; }
+        .holo-btn.danger { border-color: rgba(255,60,60,0.4); color: #ff5555; }
+        .holo-btn.danger:hover { background: rgba(255,60,60,0.1); }
+        .m-input { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 14px 20px; font-family: inherit; font-size: 32px; text-align: center; letter-spacing: 10px; border-radius: 6px; width: 240px; outline: none; }
+        .m-input:focus { border-color: #00ffff; }
+        .m-input::placeholder { color: rgba(0,255,255,0.2); letter-spacing: 2px; font-size: 14px; }
+        #mobile-preview { width: 280px; height: 210px; border-radius: 8px; border: 1px solid rgba(0,255,255,0.2); background: #000; margin: 16px auto; display: none; object-fit: cover; }
+        #mobile-preview.active { display: block; }
+        #cam-choice { display: none; position: fixed; inset: 0; z-index: 150; background: rgba(8,8,16,0.95); }
+        .cc-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); backdrop-filter: blur(20px); }
+        .cc-title { font-size: 14px; letter-spacing: 4px; opacity: 0.7; margin-bottom: 30px; }
+        .cc-buttons { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+        .cc-btn { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 20px 30px; font-family: inherit; font-size: 14px; cursor: pointer; border-radius: 8px; letter-spacing: 1px; transition: all 0.2s; min-width: 160px; }
+        .cc-btn:hover { background: rgba(0,255,255,0.1); border-color: #00ffff; box-shadow: 0 0 20px rgba(0,255,255,0.2); }
+        .cc-btn .icon { font-size: 32px; display: block; margin-bottom: 10px; }
+        .cc-btn .label { font-size: 11px; opacity: 0.6; margin-top: 6px; display: block; }
+
+        /* Difficulty choice */
+        #diff-choice { display: none; position: fixed; inset: 0; z-index: 140; background: rgba(8,8,16,0.95); }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="c"></canvas>
+
+    <div id="cam-choice">
+        <div class="cc-card">
+            <div class="cc-title">C H O O S E &nbsp; C A M E R A</div>
+            <div class="cc-buttons">
+                <button class="cc-btn" id="cc-local"><span class="icon">&#x1F4F7;</span>LOCAL CAMERA<span class="label">Use this device's webcam</span></button>
+                <button class="cc-btn" id="cc-phone"><span class="icon">&#x1F4F1;</span>PAIR PHONE<span class="label">Stream from your phone</span></button>
+                <button class="cc-btn" id="cc-skip"><span class="icon">&#x1F5B1;</span>MOUSE ONLY<span class="label">Play with mouse</span></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="diff-choice">
+        <div class="cc-card">
+            <div class="cc-title">D I F F I C U L T Y</div>
+            <div class="cc-buttons">
+                <button class="cc-btn" data-diff="easy"><span class="icon" style="color:#00ff88">&#x25CF;</span>EASY<span class="label">Slow AI, wide paddle</span></button>
+                <button class="cc-btn" data-diff="medium"><span class="icon" style="color:#ffaa00">&#x25CF;</span>MEDIUM<span class="label">Balanced</span></button>
+                <button class="cc-btn" data-diff="hard"><span class="icon" style="color:#ff3355">&#x25CF;</span>HARD<span class="label">Fast AI, narrow paddle</span></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="pair-overlay">
+        <div class="p-card">
+            <div class="p-title">P A I R &nbsp; D E V I C E</div>
+            <div>Open on your phone:</div>
+            <div style="color:#ffaa00;font-size:16px;margin:8px 0;">jarvis.tuxy.online/pong</div>
+            <div style="font-size:11px;opacity:0.4;margin-bottom:16px;">Then enter this code:</div>
+            <div class="p-code" id="pair-code-display">------</div>
+            <div class="p-status" id="p-status">Generating code...</div>
+            <button class="holo-btn danger" id="pair-cancel">CANCEL</button>
+        </div>
+    </div>
+
+    <div id="mobile-ui">
+        <div class="m-card">
+            <div class="m-title">J.A.R.V.I.S. &nbsp; P O N G &nbsp; R E M O T E</div>
+            <video id="mobile-preview" autoplay playsinline muted></video>
+            <div style="margin:16px 0;"><input class="m-input" id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code"></div>
+            <button class="holo-btn" id="pair-connect">C O N N E C T</button>
+            <div class="m-status" id="m-status">Enter the 6-digit code from your desktop</div>
+        </div>
+    </div>
+
+    <script src="lib/peerjs/peerjs.min.js"></script>
+    <script src="lib/hands/hands.js"></script>
+    <script src="lib/camera_utils/camera_utils.js"></script>
+
+    <script>
+    (function() {
+        'use strict';
+
+        var F = "'Courier New',Consolas,monospace";
+        var PI = Math.PI, TAU = PI * 2;
+
+        // ═══════════════════════════════════════════════════════════
+        // STATE
+        // ═══════════════════════════════════════════════════════════
+
+        var S = {
+            canvas: null, ctx: null, w: 0, h: 0,
+            // Table
+            tableX: 0, tableY: 0, tableW: 0, tableH: 0,
+            // Paddles
+            playerY: 0, playerR: 40, playerSpeed: 0,
+            aiY: 0, aiR: 40, aiSpeed: 4, aiReact: 0.7,
+            // Puck
+            puckX: 0, puckY: 0, puckVX: 0, puckVY: 0, puckR: 12, puckSpeed: 6,
+            puckTrail: [],
+            // Score
+            playerScore: 0, aiScore: 0, maxScore: 7,
+            // Game state
+            playing: false, paused: false, countdown: 0, countdownStart: 0,
+            winner: null,
+            // Difficulty
+            difficulty: 'medium',
+            // Camera
+            cameraImage: null, cameraReady: false,
+            handData: null, handTrackingReady: false,
+            // Hand
+            handCursor: null, handPrevPinch: false,
+            // Pairing
+            peer: null, pairCode: null, remoteConnected: false,
+            remoteVideo: null, localCamera: null, usingRemoteCamera: false,
+            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+            // Mouse
+            mouseY: 0,
+            // Effects
+            hitFlash: 0, goalFlash: 0, goalSide: null,
+            particles: [],
+            // FPS
+            fps: 0, frameCount: 0, lastFpsTime: 0,
+            // Toast
+            toast: null,
+        };
+
+        // ═══════════════════════════════════════════════════════════
+        // UTILS
+        // ═══════════════════════════════════════════════════════════
+
+        function dist(x1,y1,x2,y2) { return Math.hypot(x2-x1,y2-y1); }
+        function clamp(v,lo,hi) { return Math.max(lo,Math.min(hi,v)); }
+        function lerp(a,b,t) { return a + (b - a) * t; }
+        function rand(lo,hi) { return lo + Math.random() * (hi - lo); }
+        function showToast(t) { S.toast = { text: t, until: performance.now() + 2500 }; }
+
+        function roundRect(ctx,x,y,w,h,r) {
+            ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
+            ctx.arcTo(x+w,y,x+w,y+r,r); ctx.lineTo(x+w,y+h-r);
+            ctx.arcTo(x+w,y+h,x+w-r,y+h,r); ctx.lineTo(x+r,y+h);
+            ctx.arcTo(x,y+h,x,y+h-r,r); ctx.lineTo(x,y+r);
+            ctx.arcTo(x,y,x+r,y,r); ctx.closePath();
+        }
+
+        function spawnParticles(x, y, color, count) {
+            for (var i = 0; i < count; i++) {
+                var a = rand(0, TAU), spd = rand(1, 5);
+                S.particles.push({ x:x, y:y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd, life: 1, color: color, size: rand(2,5) });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // GAME LOGIC
+        // ═══════════════════════════════════════════════════════════
+
+        function setDifficulty(d) {
+            S.difficulty = d;
+            if (d === 'easy')   { S.aiSpeed = 3;   S.aiReact = 0.5; S.playerR = 50; S.aiR = 40; S.puckSpeed = 5; }
+            if (d === 'medium') { S.aiSpeed = 4.5; S.aiReact = 0.65; S.playerR = 40; S.aiR = 40; S.puckSpeed = 6.5; }
+            if (d === 'hard')   { S.aiSpeed = 6;   S.aiReact = 0.85; S.playerR = 32; S.aiR = 35; S.puckSpeed = 8; }
+        }
+
+        function resetPuck(dir) {
+            S.puckX = S.tableX + S.tableW / 2;
+            S.puckY = S.tableY + S.tableH / 2;
+            var angle = rand(-PI/4, PI/4);
+            S.puckVX = Math.cos(angle) * S.puckSpeed * dir;
+            S.puckVY = Math.sin(angle) * S.puckSpeed;
+            S.puckTrail = [];
+        }
+
+        function startGame() {
+            S.playerScore = 0; S.aiScore = 0; S.winner = null;
+            S.playing = true;
+            S.playerY = S.tableY + S.tableH / 2;
+            S.aiY = S.tableY + S.tableH / 2;
+            startCountdown();
+        }
+
+        function startCountdown() {
+            S.countdown = 3;
+            S.countdownStart = performance.now();
+            resetPuck(1);
+            S.puckVX = 0; S.puckVY = 0;
+        }
+
+        function scoreGoal(side) {
+            if (side === 'player') {
+                S.aiScore++;
+                S.goalSide = 'left';
+            } else {
+                S.playerScore++;
+                S.goalSide = 'right';
+            }
+            S.goalFlash = performance.now();
+            spawnParticles(S.puckX, S.puckY, side === 'player' ? '#ff3355' : '#00ff88', 30);
+
+            if (S.playerScore >= S.maxScore) {
+                S.winner = 'player';
+                S.playing = false;
+                showToast('YOU WIN!');
+            } else if (S.aiScore >= S.maxScore) {
+                S.winner = 'ai';
+                S.playing = false;
+                showToast('AI WINS');
+            } else {
+                startCountdown();
+            }
+        }
+
+        function updatePuck() {
+            if (S.countdown > 0) return;
+
+            // Move
+            S.puckX += S.puckVX;
+            S.puckY += S.puckVY;
+
+            // Trail
+            S.puckTrail.push({ x: S.puckX, y: S.puckY });
+            if (S.puckTrail.length > 12) S.puckTrail.shift();
+
+            var tl = S.tableX, tr = S.tableX + S.tableW;
+            var tt = S.tableY, tb = S.tableY + S.tableH;
+            var pr = S.puckR;
+
+            // Top/bottom bounce
+            if (S.puckY - pr < tt) { S.puckY = tt + pr; S.puckVY = Math.abs(S.puckVY); S.hitFlash = performance.now(); }
+            if (S.puckY + pr > tb) { S.puckY = tb - pr; S.puckVY = -Math.abs(S.puckVY); S.hitFlash = performance.now(); }
+
+            // Player paddle (left)
+            var padX = tl + 50;
+            if (S.puckX - pr < padX + 10 && S.puckX - pr > padX - 15) {
+                var dy = S.puckY - S.playerY;
+                if (Math.abs(dy) < S.playerR + pr) {
+                    S.puckX = padX + 10 + pr;
+                    var hitAngle = (dy / (S.playerR + pr)) * (PI / 3);
+                    var spd = Math.sqrt(S.puckVX * S.puckVX + S.puckVY * S.puckVY) * 1.03;
+                    spd = Math.min(spd, S.puckSpeed * 2);
+                    S.puckVX = Math.cos(hitAngle) * spd;
+                    S.puckVY = Math.sin(hitAngle) * spd;
+                    S.hitFlash = performance.now();
+                    spawnParticles(S.puckX, S.puckY, '#00ffff', 8);
+                }
+            }
+
+            // AI paddle (right)
+            var aiPadX = tr - 50;
+            if (S.puckX + pr > aiPadX - 10 && S.puckX + pr < aiPadX + 15) {
+                var dy = S.puckY - S.aiY;
+                if (Math.abs(dy) < S.aiR + pr) {
+                    S.puckX = aiPadX - 10 - pr;
+                    var hitAngle = PI - (dy / (S.aiR + pr)) * (PI / 3);
+                    var spd = Math.sqrt(S.puckVX * S.puckVX + S.puckVY * S.puckVY) * 1.03;
+                    spd = Math.min(spd, S.puckSpeed * 2);
+                    S.puckVX = Math.cos(hitAngle) * spd;
+                    S.puckVY = Math.sin(hitAngle) * spd;
+                    S.hitFlash = performance.now();
+                    spawnParticles(S.puckX, S.puckY, '#ffaa00', 8);
+                }
+            }
+
+            // Goals
+            if (S.puckX < tl - pr * 2) scoreGoal('player');
+            if (S.puckX > tr + pr * 2) scoreGoal('ai');
+        }
+
+        function updateAI() {
+            if (S.countdown > 0) return;
+            var targetY = S.puckY;
+            // Predict where puck will be
+            if (S.puckVX > 0) {
+                var timeToReach = (S.tableX + S.tableW - 60 - S.puckX) / Math.max(S.puckVX, 0.1);
+                targetY = S.puckY + S.puckVY * timeToReach * S.aiReact;
+                targetY = clamp(targetY, S.tableY + S.aiR, S.tableY + S.tableH - S.aiR);
+            }
+            var diff = targetY - S.aiY;
+            if (Math.abs(diff) > 3) {
+                S.aiY += clamp(diff, -S.aiSpeed, S.aiSpeed);
+            }
+            S.aiY = clamp(S.aiY, S.tableY + S.aiR, S.tableY + S.tableH - S.aiR);
+        }
+
+        function updatePlayerFromMouse() {
+            var target = clamp(S.mouseY, S.tableY + S.playerR, S.tableY + S.tableH - S.playerR);
+            S.playerY = lerp(S.playerY, target, 0.3);
+        }
+
+        function updatePlayerFromHand() {
+            if (!S.handCursor) return;
+            var target = clamp(S.handCursor.y, S.tableY + S.playerR, S.tableY + S.tableH - S.playerR);
+            S.playerY = lerp(S.playerY, target, 0.35);
+        }
+
+        function updateParticles() {
+            for (var i = S.particles.length - 1; i >= 0; i--) {
+                var p = S.particles[i];
+                p.x += p.vx; p.y += p.vy;
+                p.vx *= 0.96; p.vy *= 0.96;
+                p.life -= 0.025;
+                if (p.life <= 0) S.particles.splice(i, 1);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // GESTURE
+        // ═══════════════════════════════════════════════════════════
+
+        function isFingerCurled(hand, t, p) { var w=hand[0]; return Math.hypot(hand[t].x-w.x,hand[t].y-w.y) < Math.hypot(hand[p].x-w.x,hand[p].y-w.y); }
+        function isFingerExtended(hand, t, p) { var w=hand[0]; return Math.hypot(hand[t].x-w.x,hand[t].y-w.y) > Math.hypot(hand[p].x-w.x,hand[p].y-w.y)*1.05; }
+        function isPinching(hand) { return Math.hypot(hand[4].x-hand[8].x,hand[4].y-hand[8].y) < 0.06; }
+        function isThumbsUp(hand) {
+            return (hand[5].y - hand[4].y) > 0.06 && (hand[2].y - hand[4].y) > 0.04 &&
+                   isFingerCurled(hand,8,6) && isFingerCurled(hand,12,10) && isFingerCurled(hand,16,14) && isFingerCurled(hand,20,18);
+        }
+
+        function processGestures(hands) {
+            if (!hands || hands.length === 0) { S.handCursor = null; return; }
+            var h = hands[0];
+            var raw = { x: (1 - h[8].x) * S.w, y: h[8].y * S.h };
+            if (!S.handCursor) S.handCursor = { x: raw.x, y: raw.y };
+            S.handCursor.x += (raw.x - S.handCursor.x) * 0.4;
+            S.handCursor.y += (raw.y - S.handCursor.y) * 0.4;
+
+            // Thumbs up to start/restart
+            var thumbUp = isThumbsUp(h);
+            if (thumbUp && !S.handPrevThumb && (!S.playing || S.winner)) {
+                startGame();
+            }
+            S.handPrevThumb = thumbUp;
+
+            updatePlayerFromHand();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // DRAWING
+        // ═══════════════════════════════════════════════════════════
+
+        function drawTable(ctx, time) {
+            var tx = S.tableX, ty = S.tableY, tw = S.tableW, th = S.tableH;
+
+            // Table surface
+            ctx.fillStyle = 'rgba(0,15,30,0.7)';
+            roundRect(ctx, tx, ty, tw, th, 8);
+            ctx.fill();
+
+            // Border glow
+            ctx.strokeStyle = 'rgba(0,255,255,0.2)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Center line
+            ctx.setLineDash([8, 8]);
+            ctx.strokeStyle = 'rgba(0,255,255,0.1)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(tx + tw / 2, ty);
+            ctx.lineTo(tx + tw / 2, ty + th);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Center circle
+            ctx.strokeStyle = 'rgba(0,255,255,0.08)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(tx + tw / 2, ty + th / 2, 60, 0, TAU);
+            ctx.stroke();
+
+            // Goal areas
+            ctx.strokeStyle = 'rgba(0,255,255,0.06)';
+            ctx.beginPath();
+            ctx.arc(tx, ty + th / 2, 80, -PI / 2, PI / 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(tx + tw, ty + th / 2, 80, PI / 2, PI * 1.5);
+            ctx.stroke();
+
+            // Goal flash
+            if (S.goalFlash && time - S.goalFlash < 500) {
+                var alpha = 1 - (time - S.goalFlash) / 500;
+                var gx = S.goalSide === 'left' ? tx : tx + tw - 30;
+                ctx.fillStyle = 'rgba(' + (S.goalSide === 'left' ? '255,50,80' : '0,255,136') + ',' + (alpha * 0.3) + ')';
+                ctx.fillRect(gx, ty, 30, th);
+            }
+        }
+
+        function drawPaddle(ctx, x, y, r, color, time) {
+            ctx.save();
+            // Outer glow ring
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 15;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, TAU);
+            ctx.stroke();
+
+            // Inner fill
+            ctx.fillStyle = color.replace(')', ',0.15)').replace('rgb', 'rgba');
+            ctx.fill();
+
+            // Rotating arcs
+            var t = time * 0.003;
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            for (var i = 0; i < 3; i++) {
+                var start = t + i * TAU / 3;
+                ctx.beginPath();
+                ctx.arc(x, y, r + 6, start, start + PI / 4);
+                ctx.stroke();
+            }
+
+            // Center dot
+            ctx.beginPath();
+            ctx.arc(x, y, 4, 0, TAU);
+            ctx.fillStyle = color;
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawPuck(ctx, time) {
+            // Trail
+            for (var i = 0; i < S.puckTrail.length; i++) {
+                var t = S.puckTrail[i];
+                var alpha = (i / S.puckTrail.length) * 0.3;
+                var size = S.puckR * (i / S.puckTrail.length) * 0.6;
+                ctx.beginPath();
+                ctx.arc(t.x, t.y, size, 0, TAU);
+                ctx.fillStyle = 'rgba(255,255,255,' + alpha + ')';
+                ctx.fill();
+            }
+
+            // Puck
+            ctx.save();
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 20;
+            ctx.beginPath();
+            ctx.arc(S.puckX, S.puckY, S.puckR, 0, TAU);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Inner ring
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(S.puckX, S.puckY, S.puckR * 0.5, 0, TAU);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawScore(ctx) {
+            var cx = S.tableX + S.tableW / 2;
+            var y = S.tableY - 20;
+
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+
+            // Player score (left)
+            ctx.font = 'bold 48px ' + F;
+            ctx.fillStyle = '#00ffff';
+            ctx.shadowColor = '#00ffff';
+            ctx.shadowBlur = 15;
+            ctx.fillText(S.playerScore, cx - 60, y);
+
+            // Dash
+            ctx.font = '24px ' + F;
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.shadowBlur = 0;
+            ctx.fillText('-', cx, y - 8);
+
+            // AI score (right)
+            ctx.font = 'bold 48px ' + F;
+            ctx.fillStyle = '#ffaa00';
+            ctx.shadowColor = '#ffaa00';
+            ctx.shadowBlur = 15;
+            ctx.fillText(S.aiScore, cx + 60, y);
+
+            ctx.shadowBlur = 0;
+
+            // Labels
+            ctx.font = '10px ' + F;
+            ctx.fillStyle = 'rgba(0,255,255,0.5)';
+            ctx.fillText('YOU', cx - 60, y - 50);
+            ctx.fillStyle = 'rgba(255,170,0,0.5)';
+            ctx.fillText('A.I.', cx + 60, y - 50);
+
+            ctx.restore();
+        }
+
+        function drawCountdown(ctx, time) {
+            if (S.countdown <= 0) return;
+            var elapsed = (time - S.countdownStart) / 1000;
+            var num = Math.ceil(3 - elapsed);
+            if (num <= 0) { S.countdown = 0; resetPuck(S.aiScore >= S.playerScore ? 1 : -1); return; }
+            S.countdown = num;
+
+            var scale = 1 + (1 - (elapsed % 1)) * 0.5;
+            var alpha = 0.5 + (1 - (elapsed % 1)) * 0.5;
+
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.font = 'bold ' + Math.floor(72 * scale) + 'px ' + F;
+            ctx.fillStyle = '#00ffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = '#00ffff';
+            ctx.shadowBlur = 30;
+            ctx.fillText(num, S.tableX + S.tableW / 2, S.tableY + S.tableH / 2);
+            ctx.restore();
+        }
+
+        function drawParticles(ctx) {
+            S.particles.forEach(function(p) {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+            });
+            ctx.globalAlpha = 1;
+        }
+
+        function drawHandTracking(ctx, hands, time) {
+            if (!hands || hands.length === 0) return;
+            var w = S.w, h = S.h;
+            var connections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+            hands.forEach(function(hand) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 1;
+                connections.forEach(function(pair) {
+                    ctx.beginPath();
+                    ctx.moveTo((1-hand[pair[0]].x)*w, hand[pair[0]].y*h);
+                    ctx.lineTo((1-hand[pair[1]].x)*w, hand[pair[1]].y*h);
+                    ctx.stroke();
+                });
+                [4,8,12,16,20].forEach(function(idx) {
+                    ctx.beginPath(); ctx.arc((1-hand[idx].x)*w, hand[idx].y*h, 3, 0, TAU);
+                    ctx.fillStyle = '#00ffff'; ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 8;
+                    ctx.fill(); ctx.shadowBlur = 0;
+                });
+                ctx.restore();
+            });
+        }
+
+        function drawHandCursor(ctx, time) {
+            if (!S.handCursor) return;
+            var x = S.handCursor.x, y = S.handCursor.y, t = time * 0.004;
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0,255,255,0.4)'; ctx.lineWidth = 1.5;
+            for (var i = 0; i < 4; i++) {
+                var start = t + i * PI / 2;
+                ctx.beginPath(); ctx.arc(x, y, 14, start, start + PI / 4); ctx.stroke();
+            }
+            ctx.beginPath(); ctx.arc(x, y, 2, 0, TAU);
+            ctx.fillStyle = '#00ffff'; ctx.fill();
+            ctx.restore();
+        }
+
+        function drawHUD(ctx, w, h, time) {
+            // Corner brackets
+            var s = 30, o = 10;
+            ctx.strokeStyle = 'rgba(0,255,255,0.25)'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(o, o+s); ctx.lineTo(o, o); ctx.lineTo(o+s, o); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w-o-s, o); ctx.lineTo(w-o, o); ctx.lineTo(w-o, o+s); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(o, h-o-s); ctx.lineTo(o, h-o); ctx.lineTo(o+s, h-o); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w-o-s, h-o); ctx.lineTo(w-o, h-o); ctx.lineTo(w-o, h-o-s); ctx.stroke();
+
+            // Scan line
+            var sy = ((time % 5000) / 5000) * h;
+            ctx.save();
+            var grad = ctx.createLinearGradient(0,sy-30,0,sy+30);
+            grad.addColorStop(0,'transparent');
+            grad.addColorStop(0.5,'rgba(0,255,255,0.03)');
+            grad.addColorStop(1,'transparent');
+            ctx.fillStyle = grad; ctx.fillRect(0,sy-30,w,60);
+            ctx.restore();
+
+            // Title
+            ctx.save();
+            ctx.font = '11px ' + F; ctx.fillStyle = '#00ffff'; ctx.globalAlpha = 0.5;
+            ctx.textAlign = 'center'; ctx.fillText('J.A.R.V.I.S.  AIR HOCKEY', w/2, 20);
+            ctx.restore();
+
+            // Status
+            ctx.save();
+            ctx.font = '9px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.globalAlpha = 0.5;
+            ctx.fillText('FPS:' + S.fps + '  CAM:' + (S.usingRemoteCamera ? 'PHONE' : (S.cameraReady ? 'LOCAL' : 'OFF')), 12, h - 10);
+            ctx.textAlign = 'right';
+            ctx.fillText('First to ' + S.maxScore + '  |  ' + S.difficulty.toUpperCase(), w - 12, h - 10);
+            ctx.restore();
+        }
+
+        function drawStartScreen(ctx, w, h, time) {
+            ctx.save();
+            ctx.font = 'bold 32px ' + F; ctx.fillStyle = '#00ffff'; ctx.textAlign = 'center';
+            ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 25;
+            ctx.fillText('AIR HOCKEY', w/2, h/2 - 30);
+            ctx.shadowBlur = 0;
+            ctx.font = '14px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            var pulse = Math.sin(time / 500) * 0.3 + 0.7;
+            ctx.globalAlpha = pulse;
+            ctx.fillText('ENTER / Thumbs Up to start', w/2, h/2 + 15);
+            ctx.globalAlpha = 1;
+            ctx.font = '11px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.fillText('Move your hand up/down to control the paddle', w/2, h/2 + 45);
+            ctx.restore();
+        }
+
+        function drawWinScreen(ctx, w, h) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(8,8,16,0.7)'; ctx.fillRect(0,0,w,h);
+            ctx.font = 'bold 36px ' + F; ctx.textAlign = 'center';
+            if (S.winner === 'player') {
+                ctx.fillStyle = '#00ff88'; ctx.shadowColor = '#00ff88';
+            } else {
+                ctx.fillStyle = '#ff3355'; ctx.shadowColor = '#ff3355';
+            }
+            ctx.shadowBlur = 30;
+            ctx.fillText(S.winner === 'player' ? 'YOU WIN!' : 'A.I. WINS', w/2, h/2 - 20);
+            ctx.shadowBlur = 0;
+            ctx.font = '18px ' + F; ctx.fillStyle = '#00ffff';
+            ctx.fillText(S.playerScore + ' - ' + S.aiScore, w/2, h/2 + 20);
+            ctx.font = '12px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.4)';
+            ctx.fillText('ENTER / Thumbs Up to play again', w/2, h/2 + 55);
+            ctx.restore();
+        }
+
+        function drawToast(ctx, w, time) {
+            if (!S.toast || time > S.toast.until) return;
+            var rem = S.toast.until - time;
+            ctx.save(); ctx.globalAlpha = rem < 500 ? rem / 500 : 1;
+            ctx.font = '13px ' + F; ctx.textAlign = 'center';
+            var tw = ctx.measureText(S.toast.text).width + 40;
+            var tx = w/2 - tw/2, ty = 45;
+            ctx.fillStyle = 'rgba(0,20,40,0.85)';
+            roundRect(ctx, tx, ty, tw, 28, 4); ctx.fill();
+            ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 1; ctx.stroke();
+            ctx.fillStyle = '#00ffff'; ctx.fillText(S.toast.text, w/2, ty+19);
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RENDER LOOP
+        // ═══════════════════════════════════════════════════════════
+
+        function renderLoop(timestamp) {
+            var ctx = S.ctx, w = S.w, h = S.h;
+            S.frameCount++;
+            if (timestamp - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = timestamp; }
+
+            // Clear
+            ctx.fillStyle = '#080810'; ctx.fillRect(0, 0, w, h);
+
+            // Camera
+            if (S.cameraImage) {
+                ctx.save(); ctx.globalAlpha = 0.08;
+                ctx.translate(w, 0); ctx.scale(-1, 1);
+                ctx.drawImage(S.cameraImage, 0, 0, w, h);
+                ctx.restore();
+            }
+
+            drawHUD(ctx, w, h, timestamp);
+
+            if (S.playing && !S.winner) {
+                // Update
+                if (!S.handCursor) updatePlayerFromMouse();
+                updateAI();
+                updatePuck();
+                updateParticles();
+
+                // Update countdown
+                if (S.countdown > 0) {
+                    var elapsed = (timestamp - S.countdownStart) / 1000;
+                    if (elapsed >= 3) { S.countdown = 0; resetPuck(S.aiScore >= S.playerScore ? 1 : -1); }
+                }
+
+                // Draw
+                drawTable(ctx, timestamp);
+                drawPuck(ctx, timestamp);
+                drawPaddle(ctx, S.tableX + 50, S.playerY, S.playerR, 'rgb(0,255,255)', timestamp);
+                drawPaddle(ctx, S.tableX + S.tableW - 50, S.aiY, S.aiR, 'rgb(255,170,0)', timestamp);
+                drawScore(ctx);
+                drawCountdown(ctx, timestamp);
+                drawParticles(ctx);
+            } else if (S.winner) {
+                drawTable(ctx, timestamp);
+                drawScore(ctx);
+                drawWinScreen(ctx, w, h);
+                updateParticles();
+                drawParticles(ctx);
+            } else {
+                drawStartScreen(ctx, w, h, timestamp);
+            }
+
+            // Hand tracking
+            if (S.handData) drawHandTracking(ctx, S.handData, timestamp);
+            drawHandCursor(ctx, timestamp);
+            drawToast(ctx, w, timestamp);
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INPUT
+        // ═══════════════════════════════════════════════════════════
+
+        function initInput() {
+            S.canvas.addEventListener('mousemove', function(e) { S.mouseY = e.clientY; });
+            window.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    if (!S.playing || S.winner) startGame();
+                }
+                if (e.key === 'ArrowUp' || e.key === 'w') S.mouseY -= 20;
+                if (e.key === 'ArrowDown' || e.key === 's') S.mouseY += 20;
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // MEDIAPIPE
+        // ═══════════════════════════════════════════════════════════
+
+        var mpHands;
+        try {
+            mpHands = new Hands({ locateFile: function(f) { return 'lib/hands/' + f; } });
+            mpHands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
+            mpHands.onResults(function(results) {
+                S.cameraImage = results.image; S.cameraReady = true;
+                S.handData = results.multiHandLandmarks && results.multiHandLandmarks.length > 0 ? results.multiHandLandmarks : null;
+                if (S.handData) processGestures(S.handData);
+                if (!S.handTrackingReady) { S.handTrackingReady = true; showToast('Hand tracking online'); }
+            });
+        } catch(e) { console.warn('MediaPipe init failed:', e); }
+
+        // ═══════════════════════════════════════════════════════════
+        // PAIRING (same pattern)
+        // ═══════════════════════════════════════════════════════════
+
+        function generatePairCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
+        function startPairing() {
+            var code = generatePairCode(); S.pairCode = code;
+            document.getElementById('pair-code-display').textContent = code;
+            document.getElementById('p-status').textContent = 'Waiting...';
+            document.getElementById('pair-overlay').style.display = 'block';
+            if (S.peer) S.peer.destroy();
+            S.peer = new Peer('jpong-' + code);
+            S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active — waiting for phone...'; });
+            S.peer.on('error', function(err) { document.getElementById('p-status').textContent = 'Error: ' + err.type; });
+            S.peer.on('call', function(call) {
+                call.answer();
+                call.on('stream', function(rs) { onRemoteCam(rs); document.getElementById('pair-overlay').style.display = 'none'; });
+                call.on('close', function() { offRemoteCam(); });
+            });
+        }
+        function cancelPairing() { document.getElementById('pair-overlay').style.display = 'none'; if (S.peer) { S.peer.destroy(); S.peer = null; } }
+        function onRemoteCam(stream) {
+            S.remoteVideo = document.createElement('video');
+            S.remoteVideo.srcObject = stream; S.remoteVideo.autoplay = true; S.remoteVideo.playsInline = true; S.remoteVideo.muted = true; S.remoteVideo.play();
+            if (S.localCamera && S.localCamera.stop) S.localCamera.stop();
+            S.usingRemoteCamera = true; S.remoteConnected = true;
+            S.remoteVideo.onloadeddata = function() { processRemote(); };
+            showToast('Phone camera connected!');
+        }
+        function processRemote() {
+            if (!S.usingRemoteCamera || !S.remoteVideo) return;
+            if (mpHands) mpHands.send({ image: S.remoteVideo }).then(function() { if (S.usingRemoteCamera) requestAnimationFrame(processRemote); });
+        }
+        function offRemoteCam() {
+            S.usingRemoteCamera = false; S.remoteConnected = false;
+            if (S.remoteVideo) { S.remoteVideo.srcObject = null; S.remoteVideo = null; }
+            startLocalCam(); showToast('Phone disconnected');
+        }
+        function startLocalCam() {
+            var video = document.getElementById('video');
+            if (mpHands) {
+                S.localCamera = new Camera(video, { onFrame: function() { return mpHands.send({ image: video }); }, width: 640, height: 480 });
+                S.localCamera.start().then(function() { showToast('Camera online'); }).catch(function() { showToast('No camera — mouse mode'); });
+            }
+        }
+        function initMobileUI() {
+            document.getElementById('mobile-ui').style.display = 'block';
+            document.getElementById('c').style.display = 'none';
+            document.getElementById('pair-connect').onclick = function() {
+                var code = document.getElementById('pair-input').value.trim();
+                if (code.length !== 6) { document.getElementById('m-status').textContent = 'Enter 6 digits'; return; }
+                connectMobile(code);
+            };
+            document.getElementById('pair-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('pair-connect').click(); });
+        }
+        function connectMobile(code) {
+            var st = document.getElementById('m-status'), pv = document.getElementById('mobile-preview');
+            st.textContent = 'Connecting...';
+            var peer = new Peer();
+            peer.on('open', function() {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: {ideal:640}, height: {ideal:480} }, audio: false })
+                .then(function(stream) {
+                    pv.srcObject = stream; pv.classList.add('active');
+                    var call = peer.call('jpong-' + code, stream);
+                    if (!call) { st.textContent = 'Failed'; return; }
+                    st.textContent = 'Streaming...'; st.className = 'm-status connected';
+                    var btn = document.getElementById('pair-connect');
+                    btn.textContent = 'DISCONNECT'; btn.className = 'holo-btn danger';
+                    btn.onclick = function() { call.close(); stream.getTracks().forEach(function(t){t.stop();}); pv.srcObject=null; pv.classList.remove('active'); st.textContent='Disconnected'; st.className='m-status'; btn.textContent='CONNECT'; btn.className='holo-btn'; btn.onclick=function(){var c=document.getElementById('pair-input').value.trim();if(c.length===6)connectMobile(c);}; peer.destroy(); };
+                }).catch(function(err) { st.textContent = 'Camera: ' + err.message; });
+            });
+            peer.on('error', function(err) { st.textContent = 'Failed: ' + err.type; });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════════════
+
+        function init() {
+            if (S.isMobile) { initMobileUI(); return; }
+
+            S.canvas = document.getElementById('c');
+            S.ctx = S.canvas.getContext('2d');
+
+            function resize() {
+                S.w = window.innerWidth; S.h = window.innerHeight;
+                S.canvas.width = S.w; S.canvas.height = S.h;
+                var margin = 60;
+                S.tableW = S.w - margin * 2;
+                S.tableH = Math.min(S.h * 0.65, S.tableW * 0.45);
+                S.tableX = (S.w - S.tableW) / 2;
+                S.tableY = (S.h - S.tableH) / 2 + 30;
+                S.mouseY = S.tableY + S.tableH / 2;
+                S.playerY = S.tableY + S.tableH / 2;
+                S.aiY = S.tableY + S.tableH / 2;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            initInput();
+
+            // Difficulty choice first
+            document.getElementById('diff-choice').style.display = 'block';
+            document.querySelectorAll('#diff-choice [data-diff]').forEach(function(btn) {
+                btn.onclick = function() {
+                    setDifficulty(btn.dataset.diff);
+                    document.getElementById('diff-choice').style.display = 'none';
+                    // Then camera choice
+                    document.getElementById('cam-choice').style.display = 'block';
+                };
+            });
+
+            document.getElementById('cc-local').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; startLocalCam(); };
+            document.getElementById('cc-phone').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; startPairing(); };
+            document.getElementById('cc-skip').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; showToast('Mouse mode'); };
+            document.getElementById('pair-cancel').onclick = cancelPairing;
+
+            S.lastFpsTime = performance.now();
+            requestAnimationFrame(renderLoop);
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>
