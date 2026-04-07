@@ -968,7 +968,7 @@
         var mpHands;
         try {
             mpHands = new Hands({ locateFile: function(f) { return 'lib/hands/' + f; } });
-            mpHands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
+            mpHands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.4 });
             mpHands.onResults(function(results) {
                 G.cameraImage = results.image;
                 G.cameraReady = true;
@@ -1042,9 +1042,10 @@
         function startLocalCamera() {
             var video = document.getElementById('video');
             if (mpHands) {
+                var _skip = false;
                 G.localCamera = new Camera(video, {
-                    onFrame: function() { return mpHands.send({ image: video }); },
-                    width: 640, height: 480,
+                    onFrame: function() { _skip = !_skip; if (_skip) return Promise.resolve(); return mpHands.send({ image: video }); },
+                    width: 320, height: 240,
                 });
                 G.localCamera.start().then(function() { showToast('Camera online'); })
                     .catch(function() { showToast('Camera offline — keyboard mode'); });

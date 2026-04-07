@@ -673,7 +673,7 @@
         var mpHands;
         try {
             mpHands = new Hands({ locateFile: function(f) { return 'lib/hands/' + f; } });
-            mpHands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
+            mpHands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.4 });
             mpHands.onResults(function(results) {
                 S.cameraImage = results.image; S.cameraReady = true;
                 S.handData = results.multiHandLandmarks && results.multiHandLandmarks.length > 0 ? results.multiHandLandmarks : null;
@@ -711,8 +711,11 @@
             S.remoteVideo.onloadeddata = function() { processRemote(); };
             showToast('Phone connected!');
         }
+        var _remoteSkip = false;
         function processRemote() {
             if (!S.usingRemoteCamera || !S.remoteVideo) return;
+            _remoteSkip = !_remoteSkip;
+            if (_remoteSkip) { requestAnimationFrame(processRemote); return; }
             if (mpHands) mpHands.send({ image: S.remoteVideo }).then(function() { if (S.usingRemoteCamera) requestAnimationFrame(processRemote); });
         }
         function offRemoteCam() {
@@ -723,7 +726,8 @@
         function startLocalCam() {
             var video = document.getElementById('video');
             if (mpHands) {
-                S.localCamera = new Camera(video, { onFrame: function() { return mpHands.send({ image: video }); }, width: 640, height: 480 });
+                var _skipFrame = false;
+                S.localCamera = new Camera(video, { onFrame: function() { _skipFrame = !_skipFrame; if (_skipFrame) return Promise.resolve(); return mpHands.send({ image: video }); }, width: 320, height: 240 });
                 S.localCamera.start().then(function() { showToast('Camera online'); }).catch(function() { showToast('No camera'); });
             }
         }
