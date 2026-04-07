@@ -909,12 +909,13 @@
             ctx.fillStyle = COLORS.bg;
             ctx.fillRect(0, 0, w, h);
 
-            // Camera feed
-            if (G.showCamera && G.cameraImage) {
+            // Camera feed - draw live video directly
+            var _vid = G.usingRemoteCamera ? G.remoteVideo : document.getElementById('video');
+            if (G.showCamera && _vid && _vid.readyState >= 2) {
                 ctx.save();
                 ctx.globalAlpha = 0.1;
                 ctx.translate(w, 0); ctx.scale(-1, 1);
-                ctx.drawImage(G.cameraImage, 0, 0, w, h);
+                ctx.drawImage(_vid, 0, 0, w, h);
                 ctx.restore();
             }
 

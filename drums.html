@@ -603,10 +603,11 @@
 
             ctx.fillStyle = '#080810'; ctx.fillRect(0, 0, w, h);
 
-            if (S.cameraImage) {
+            var _vid = S.usingRemoteCamera ? S.remoteVideo : document.getElementById('video');
+            if (_vid && _vid.readyState >= 2) {
                 ctx.save(); ctx.globalAlpha = 0.08;
                 ctx.translate(w, 0); ctx.scale(-1, 1);
-                ctx.drawImage(S.cameraImage, 0, 0, w, h);
+                ctx.drawImage(_vid, 0, 0, w, h);
                 ctx.restore();
             }
 
