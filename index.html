@@ -39,7 +39,7 @@
             DIM: 'rgba(255,255,255,0.3)',
             BG: '#080810',
             PALETTE: ['#00ffff','#ffaa00','#ff00ff','#00ff88','#ff3333','#ffffff','#0088ff','#ff6600'],
-            SHAPES: ['circle','rect','triangle','hexagon','star','ring'],
+            SHAPES: ['circle','rect','triangle','hexagon','star','ring','pen'],
             TOOLBAR_W: 60,
             TOOL_PAD: 8,
             TOOL_SIZE: 44,
@@ -79,11 +79,25 @@
             ghostShape: null,
             // Hand interaction
             handCursor: null,
-            handMode: 'idle', // 'idle'|'grabbing'|'two_hand'|'cooldown'
+            handCursorRaw: null,
+            handMode: 'idle',
             handDragStart: null,
             handManipStart: null,
             handPrevPinch: [false, false],
+            handPrevPalm: false,
             handHoveredId: null,
+            // Panels
+            toolPanelOpen: false,
+            colorPanelOpen: false,
+            toolPanelAnim: 0,
+            colorPanelAnim: 0,
+            // Pen / freehand
+            currentPath: null,
+            // Recording
+            recording: false,
+            mediaRecorder: null,
+            recordedChunks: [],
+            recordStart: 0,
         };
 
         // ═══════════════════════════════════════════════════════════
@@ -194,6 +208,15 @@
                     ctx.moveTo(shape.size / 3.5, 0);
                     ctx.arc(0, 0, shape.size / 3.5, 0, Math.PI * 2, true);
                     break;
+                case 'path':
+                    if (shape.points && shape.points.length > 1) {
+                        ctx.beginPath();
+                        ctx.moveTo(shape.points[0].x, shape.points[0].y);
+                        for (var pi = 1; pi < shape.points.length; pi++) {
+                            ctx.lineTo(shape.points[pi].x, shape.points[pi].y);
+                        }
+                    }
+                    break;
             }
         }
 
@@ -201,8 +224,22 @@
         // HIT TESTING
         // ═══════════════════════════════════════════════════════════
 
+        function distToSegment(px, py, x1, y1, x2, y2) {
+            var dx = x2 - x1, dy = y2 - y1;
+            var len2 = dx * dx + dy * dy;
+            if (len2 === 0) return dist(px, py, x1, y1);
+            var t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+            return dist(px, py, x1 + t * dx, y1 + t * dy);
+        }
+
         function hitTestShape(shape, px, py) {
             var loc = toLocal(px, py, shape);
+            if (shape.type === 'path' && shape.points) {
+                for (var i = 1; i < shape.points.length; i++) {
+                    if (distToSegment(loc.x, loc.y, shape.points[i-1].x, shape.points[i-1].y, shape.points[i].x, shape.points[i].y) < 15) return true;
+                }
+                return false;
+            }
             if (shape.type === 'rect') {
                 return Math.abs(loc.x) <= shape.width / 2 + 10 && Math.abs(loc.y) <= shape.height / 2 + 10;
             }
@@ -478,9 +515,16 @@
             ctx.shadowColor = shape.stroke;
             ctx.shadowBlur = S.selectedIds.has(shape.id) ? 25 : 12;
 
+            if (shape.type === 'path') {
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+            }
+
             drawShapePath(ctx, shape);
-            ctx.fillStyle = shape.fill;
-            ctx.fill('evenodd');
+            if (shape.type !== 'path') {
+                ctx.fillStyle = shape.fill;
+                ctx.fill('evenodd');
+            }
             ctx.strokeStyle = shape.stroke;
             ctx.lineWidth = shape.lineWidth;
             ctx.stroke();
@@ -597,10 +641,10 @@
             ctx.textAlign = 'right';
             var hints = [
                 'F=Fullscreen  G=Grid  R=Reset',
-                '1-6=Shape  V=Select  DEL=Delete',
+                '1-6=Shape  7/P=Pen  V=Select  DEL=Delete',
                 'Ctrl+Z=Undo  Ctrl+S=Save  Ctrl+D=Dup',
-                'Ctrl+G=Group  Scroll=Rotate  Shift+Scroll=Resize',
-                '[ ]=Reorder  Ctrl+Shift+S=PNG',
+                'Scroll=Rotate  Shift+Scroll=Resize',
+                'Open Palm (L)=Tools  Open Palm (R)=Colors',
             ];
             hints.forEach(function(t, i) {
                 ctx.fillText(t, w - 20, h - 12 - (hints.length - 1 - i) * 13);
@@ -750,6 +794,15 @@
                 case 'ring':
                     ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
                     ctx.beginPath(); ctx.arc(0, 0, r * 0.55, 0, Math.PI * 2); ctx.stroke(); break;
+                case 'pen':
+                    ctx.beginPath();
+                    ctx.moveTo(-6, 10); ctx.lineTo(0, -10); ctx.lineTo(6, 10);
+                    ctx.moveTo(-4, 6); ctx.lineTo(4, 6);
+                    ctx.moveTo(0, -10); ctx.lineTo(0, -13);
+                    ctx.stroke();
+                    ctx.beginPath(); ctx.arc(0, -13, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = C.PRIMARY; ctx.fill();
+                    break;
             }
             ctx.restore();
         }
@@ -922,12 +975,58 @@
             return Math.hypot(hand[4].x - hand[8].x, hand[4].y - hand[8].y) < 0.05;
         }
 
+        function isOpenPalm(hand) {
+            return isFingerExtended(hand, 8, 6) && isFingerExtended(hand, 12, 10) &&
+                   isFingerExtended(hand, 16, 14) && isFingerExtended(hand, 20, 18);
+        }
+
         // ═══════════════════════════════════════════════════════════
         // GESTURE PROCESSING (FULL HAND INTERACTION)
         // ═══════════════════════════════════════════════════════════
 
         function handPos(hand, idx) {
             return { x: (1 - hand[idx].x) * S.w, y: hand[idx].y * S.h };
+        }
+
+        // Smooth the hand cursor with lerp
+        function smoothCursor(raw) {
+            if (!S.handCursor) { S.handCursor = { x: raw.x, y: raw.y }; return; }
+            S.handCursor.x += (raw.x - S.handCursor.x) * 0.45;
+            S.handCursor.y += (raw.y - S.handCursor.y) * 0.45;
+        }
+
+        // Pen path helpers
+        function startPath(x, y, color) {
+            S.currentPath = { points: [{ x: x, y: y }], stroke: color || C.DEFAULT_STROKE, lineWidth: 3 };
+        }
+        function addPathPoint(x, y) {
+            if (!S.currentPath) return;
+            var pts = S.currentPath.points;
+            var last = pts[pts.length - 1];
+            if (dist(last.x, last.y, x, y) > 3) pts.push({ x: x, y: y });
+        }
+        function finalizePath() {
+            if (!S.currentPath || S.currentPath.points.length < 3) { S.currentPath = null; return; }
+            var pts = S.currentPath.points;
+            var cx = 0, cy = 0;
+            pts.forEach(function(p) { cx += p.x; cy += p.y; });
+            cx /= pts.length; cy /= pts.length;
+            var rel = pts.map(function(p) { return { x: p.x - cx, y: p.y - cy }; });
+            var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            rel.forEach(function(p) {
+                if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+                if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+            });
+            var shape = createShape('path', cx, cy, {
+                width: maxX - minX || 20, height: maxY - minY || 20,
+                size: Math.max(maxX - minX, maxY - minY) || 20,
+                stroke: S.currentPath.stroke, lineWidth: S.currentPath.lineWidth,
+                fill: 'transparent',
+            });
+            shape.points = rel;
+            addShape(shape);
+            S.currentPath = null;
+            showToast('Stroke saved');
         }
 
         function processGestures(hands) {
@@ -937,14 +1036,16 @@
                 S.ghostShape = null;
                 if (S.handMode === 'grabbing') pushUndo();
                 if (S.handMode === 'two_hand') pushUndo();
+                if (S.handMode === 'drawing') finalizePath();
                 S.handMode = 'idle';
                 S.gestureCounters.pinch = 0;
                 S.gestureCounters.fists = 0;
                 S.handPrevPinch = [false, false];
+                S.handPrevPalm = false;
                 return;
             }
 
-            if (S.mouse.down) return; // mouse takes priority
+            if (S.mouse.down) return;
 
             var w = S.w, h = S.h;
             var h1 = hands[0];
@@ -952,31 +1053,49 @@
             var prevP1 = S.handPrevPinch[0];
             var pinchStart1 = pinch1 && !prevP1;
             var pinchEnd1 = !pinch1 && prevP1;
+            var palm1 = isOpenPalm(h1);
+            var palmStart1 = palm1 && !S.handPrevPalm;
 
-            // Always track hand cursor from index fingertip
-            S.handCursor = handPos(h1, 8);
+            // Smooth cursor from index finger tip
+            smoothCursor(handPos(h1, 8));
 
             // Hover detection
             S.handHoveredId = null;
-            var hovered = getShapeAt(S.handCursor.x, S.handCursor.y);
-            if (hovered) S.handHoveredId = hovered.id;
+            if (S.handMode !== 'drawing') {
+                var hovered = getShapeAt(S.handCursor.x, S.handCursor.y);
+                if (hovered) S.handHoveredId = hovered.id;
+            }
+
+            // ── OPEN PALM → toggle panels ──
+            if (palmStart1 && S.handMode === 'idle') {
+                var palmCenter = handPos(h1, 9); // middle finger MCP as palm center
+                if (palmCenter.y < h * 0.4) {
+                    if (palmCenter.x < w * 0.4) {
+                        S.toolPanelOpen = !S.toolPanelOpen;
+                        if (S.toolPanelOpen) S.colorPanelOpen = false;
+                    } else if (palmCenter.x > w * 0.6) {
+                        S.colorPanelOpen = !S.colorPanelOpen;
+                        if (S.colorPanelOpen) S.toolPanelOpen = false;
+                    }
+                }
+            }
 
             // ── TWO HANDS ──
             if (hands.length >= 2) {
                 var h2 = hands[1];
                 var pinch2 = isPinching(h2);
                 var prevP2 = S.handPrevPinch[1];
-                var pinchStart2 = pinch2 && !prevP2;
                 S.handPrevPinch = [pinch1, pinch2];
+                S.handPrevPalm = palm1;
 
                 var p1 = handPos(h1, 8);
                 var p2 = handPos(h2, 8);
 
-                // Two hands pointing → ghost shape for creation
+                // Two hands pointing → ghost shape
                 if (isIndexPointing(h1) && isIndexPointing(h2)) {
                     var sz = dist(p1.x, p1.y, p2.x, p2.y);
                     if (sz > 30) {
-                        var gtype = S.activeTool === 'select' ? 'circle' : S.activeTool;
+                        var gtype = S.activeTool === 'select' || S.activeTool === 'pen' ? 'circle' : S.activeTool;
                         S.ghostShape = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2, size: sz, type: gtype, p1x: p1.x, p1y: p1.y, p2x: p2.x, p2y: p2.y };
                     }
                 } else if (!pinch1 || !pinch2) {
@@ -985,101 +1104,114 @@
 
                 // Both pinching
                 if (pinch1 && pinch2) {
-                    // Place ghost shape
                     if (S.ghostShape) {
                         S.gestureCounters.pinch++;
                         if (S.gestureCounters.pinch >= C.HOLD_FRAMES) {
                             var g = S.ghostShape;
                             var ns = createShape(g.type, g.x, g.y, { size: g.size, width: g.size, height: g.size * 0.75 });
-                            addShape(ns);
-                            S.selectedIds.clear();
-                            selectShape(ns.id, false);
-                            S.ghostShape = null;
-                            S.gestureCounters.pinch = 0;
+                            addShape(ns); S.selectedIds.clear(); selectShape(ns.id, false);
+                            S.ghostShape = null; S.gestureCounters.pinch = 0;
                             S.handMode = 'cooldown';
-                            setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 500);
+                            setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 600);
                             showToast('Shape placed');
                         }
-                    }
-                    // Two-hand resize/rotate on selected shapes
-                    else if (S.selectedIds.size > 0) {
+                    } else if (S.selectedIds.size > 0) {
                         var curDist = dist(p1.x, p1.y, p2.x, p2.y);
                         var curAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
                         if (S.handMode !== 'two_hand') {
                             S.handMode = 'two_hand';
-                            S.handManipStart = {
-                                dist: curDist, angle: curAngle,
+                            S.handManipStart = { dist: curDist, angle: curAngle,
                                 shapes: getSelected().map(function(s) {
                                     return { id: s.id, size: s.size, width: s.width, height: s.height, rotation: s.rotation };
                                 })
                             };
                         } else {
                             var ms = S.handManipStart;
-                            var scaleFactor = curDist / Math.max(ms.dist, 1);
-                            var angleDelta = curAngle - ms.angle;
+                            var sf = curDist / Math.max(ms.dist, 1);
+                            var ad = curAngle - ms.angle;
                             ms.shapes.forEach(function(orig) {
-                                var updates = { rotation: orig.rotation + angleDelta };
                                 var shape = S.shapes.find(function(s) { return s.id === orig.id; });
                                 if (!shape) return;
-                                if (shape.type === 'rect') {
-                                    updates.width = Math.max(20, orig.width * scaleFactor);
-                                    updates.height = Math.max(15, orig.height * scaleFactor);
-                                } else {
-                                    updates.size = Math.max(20, orig.size * scaleFactor);
-                                }
-                                updateShape(orig.id, updates);
+                                var up = { rotation: orig.rotation + ad };
+                                if (shape.type === 'rect') { up.width = Math.max(20, orig.width * sf); up.height = Math.max(15, orig.height * sf); }
+                                else if (shape.type !== 'path') { up.size = Math.max(20, orig.size * sf); }
+                                updateShape(orig.id, up);
                             });
                         }
                     }
                 } else {
                     S.gestureCounters.pinch = 0;
-                    if (S.handMode === 'two_hand') {
-                        pushUndo();
-                        S.handMode = 'idle';
-                    }
+                    if (S.handMode === 'two_hand') { pushUndo(); S.handMode = 'idle'; }
                 }
 
                 // Two fists → reset
                 if (isFist(h1) && isFist(h2)) {
                     S.gestureCounters.fists++;
-                    if (S.gestureCounters.fists >= C.HOLD_FRAMES) {
-                        resetAll();
-                        S.gestureCounters.fists = 0;
-                        S.handMode = 'idle';
-                    }
-                } else {
-                    S.gestureCounters.fists = 0;
-                }
+                    if (S.gestureCounters.fists >= C.HOLD_FRAMES) { resetAll(); S.gestureCounters.fists = 0; S.handMode = 'idle'; }
+                } else { S.gestureCounters.fists = 0; }
                 return;
             }
 
             // ── SINGLE HAND ──
             S.handPrevPinch = [pinch1, false];
+            S.handPrevPalm = palm1;
             S.ghostShape = null;
             S.gestureCounters.pinch = 0;
             S.gestureCounters.fists = 0;
 
             if (S.handMode === 'cooldown') return;
 
-            // Pinch START → select/grab/create/toolbar
+            var cx = S.handCursor.x, cy = S.handCursor.y;
+
+            // ── PEN TOOL: draw on pinch ──
+            if (S.activeTool === 'pen') {
+                if (pinchStart1) {
+                    S.toolPanelOpen = false; S.colorPanelOpen = false;
+                    startPath(cx, cy, C.DEFAULT_STROKE);
+                    S.handMode = 'drawing';
+                }
+                if (pinch1 && S.handMode === 'drawing') {
+                    addPathPoint(cx, cy);
+                }
+                if (pinchEnd1 && S.handMode === 'drawing') {
+                    finalizePath();
+                    S.handMode = 'idle';
+                }
+                return;
+            }
+
+            // ── PINCH START → select/grab/create/toolbar ──
             if (pinchStart1) {
-                var cx = S.handCursor.x, cy = S.handCursor.y;
+                S.toolPanelOpen = false; S.colorPanelOpen = false;
 
                 // Toolbar click
+                if (S.toolPanelAnim > 0.3 && handleToolbarClick(cx, cy)) {
+                    showToast('Tool: ' + S.activeTool.toUpperCase());
+                    S.handMode = 'cooldown';
+                    setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 500);
+                    return;
+                }
+                // Always check toolbar (even when panel closed, it's visible)
                 if (handleToolbarClick(cx, cy)) {
                     showToast('Tool: ' + S.activeTool.toUpperCase());
                     S.handMode = 'cooldown';
-                    setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 400);
+                    setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 500);
                     return;
                 }
-                // Color palette click
+                // Color palette
                 if (handleColorClick(cx, cy)) {
                     S.handMode = 'cooldown';
-                    setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 400);
+                    setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 500);
+                    return;
+                }
+                // Record button
+                if (dist(cx, cy, S.w - 35, 35) < 22) {
+                    toggleRecording();
+                    S.handMode = 'cooldown';
+                    setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 600);
                     return;
                 }
 
-                // Select tool → grab shape
                 if (S.activeTool === 'select') {
                     var hit = getShapeAt(cx, cy);
                     if (hit) {
@@ -1094,15 +1226,13 @@
                     }
                     deselectAll();
                 } else {
-                    // Draw tool → create shape at hand cursor
+                    // Shape tool → create at cursor
                     if (cx > C.TOOLBAR_W && cx < S.w - 55) {
                         var shape = createShape(S.activeTool, cx, cy);
-                        addShape(shape);
-                        S.selectedIds.clear();
-                        selectShape(shape.id, false);
+                        addShape(shape); S.selectedIds.clear(); selectShape(shape.id, false);
                         showToast(S.activeTool.toUpperCase() + ' created');
                         S.handMode = 'cooldown';
-                        setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 400);
+                        setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 500);
                     }
                 }
             }
@@ -1118,8 +1248,7 @@
 
             // Pinch END → release grab
             if (pinchEnd1 && S.handMode === 'grabbing') {
-                pushUndo();
-                S.handMode = 'idle';
+                pushUndo(); S.handMode = 'idle';
             }
         }
 
@@ -1264,8 +1393,24 @@
                 ctx.fillText('RESIZE / ROTATE', x, y - ringR - 8);
             }
 
+            // Drawing indicator
+            if (S.handMode === 'drawing') {
+                ctx.font = 'bold 10px ' + C.FONT;
+                ctx.fillStyle = C.SUCCESS;
+                ctx.textAlign = 'center';
+                ctx.fillText('DRAWING...', x, y - ringR - 8);
+            }
+
+            // Pen mode indicator
+            if (S.activeTool === 'pen' && !grabbing && S.handMode !== 'drawing') {
+                ctx.font = '9px ' + C.FONT;
+                ctx.fillStyle = C.PRIMARY;
+                ctx.textAlign = 'center';
+                ctx.fillText('PINCH TO DRAW', x, y + ringR + 14);
+            }
+
             // Hover label
-            if (hovering && !grabbing) {
+            if (hovering && !grabbing && S.activeTool !== 'pen') {
                 ctx.font = '9px ' + C.FONT;
                 ctx.fillStyle = C.SUCCESS;
                 ctx.textAlign = 'center';
@@ -1403,10 +1548,20 @@
             var x = e.clientX, y = e.clientY;
             S.mouse.x = x; S.mouse.y = y; S.mouse.down = true;
 
+            // Record button
+            if (dist(x, y, S.w - 35, 35) < 22) { toggleRecording(); return; }
+
             // Toolbar
             if (handleToolbarClick(x, y)) return;
             // Color palette
             if (handleColorClick(x, y)) return;
+
+            // Pen tool - start drawing
+            if (S.activeTool === 'pen' && x > C.TOOLBAR_W && x < S.w - 55) {
+                startPath(x, y, C.DEFAULT_STROKE);
+                S.mode = 'drawing';
+                return;
+            }
 
             if (S.activeTool === 'select') {
                 // Check handles on selected shapes
@@ -1452,6 +1607,11 @@
             S.mouse.x = e.clientX; S.mouse.y = e.clientY;
             if (!S.mouse.down) return;
 
+            if (S.mode === 'drawing') {
+                addPathPoint(e.clientX, e.clientY);
+                return;
+            }
+
             if (S.mode === 'dragging' && S.dragShapes) {
                 var dx = e.clientX - S.dragStart.x, dy = e.clientY - S.dragStart.y;
                 S.dragShapes.forEach(function(ds) {
@@ -1478,6 +1638,12 @@
         }
 
         function onMouseUp() {
+            if (S.mode === 'drawing') {
+                finalizePath();
+                S.mouse.down = false;
+                S.mode = 'idle';
+                return;
+            }
             if (S.mode !== 'idle') pushUndo();
             S.mouse.down = false;
             S.mode = 'idle';
@@ -1532,12 +1698,118 @@
                 case '4': S.activeTool = 'hexagon'; break;
                 case '5': S.activeTool = 'star'; break;
                 case '6': S.activeTool = 'ring'; break;
+                case '7': case 'p': case 'P': if (!e.ctrlKey) S.activeTool = 'pen'; break;
                 case 'f': case 'F': if (!e.ctrlKey) toggleFullscreen(); break;
                 case 'g': case 'G': if (!e.ctrlKey) S.showGrid = !S.showGrid; break;
                 case 'r': case 'R': if (!e.ctrlKey) { if (e.shiftKey) resetAll(); else resetSelected(); } break;
                 case '[': sendBackward(); break;
                 case ']': bringForward(); break;
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RECORDING
+        // ═══════════════════════════════════════════════════════════
+
+        function toggleRecording() {
+            if (S.recording) stopRecording(); else startRecording();
+        }
+        function startRecording() {
+            try {
+                var stream = S.canvas.captureStream(30);
+                S.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+            } catch (e) {
+                try {
+                    var stream = S.canvas.captureStream(30);
+                    S.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                } catch (e2) { showToast('Recording not supported'); return; }
+            }
+            S.recordedChunks = [];
+            S.mediaRecorder.ondataavailable = function(e) {
+                if (e.data.size > 0) S.recordedChunks.push(e.data);
+            };
+            S.mediaRecorder.onstop = function() {
+                var blob = new Blob(S.recordedChunks, { type: 'video/webm' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a'); a.href = url;
+                a.download = 'holoforge-' + Date.now() + '.webm';
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+            S.mediaRecorder.start(100);
+            S.recording = true;
+            S.recordStart = performance.now();
+            showToast('Recording started');
+        }
+        function stopRecording() {
+            if (S.mediaRecorder && S.recording) {
+                S.mediaRecorder.stop(); S.recording = false;
+                showToast('Recording saved');
+            }
+        }
+
+        function drawRecordButton(ctx, time) {
+            var x = S.w - 35, y = 35, r = 18;
+            var hov = dist(S.mouse.x, S.mouse.y, x, y) < r + 4;
+            if (S.handCursor) hov = hov || dist(S.handCursor.x, S.handCursor.y, x, y) < r + 4;
+
+            ctx.save();
+            // Background circle
+            ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fillStyle = hov ? 'rgba(60,0,0,0.8)' : 'rgba(30,0,0,0.7)';
+            ctx.fill();
+            ctx.strokeStyle = S.recording ? C.DANGER : 'rgba(255,80,80,0.5)';
+            ctx.lineWidth = S.recording ? 2 : 1;
+            ctx.stroke();
+
+            if (S.recording) {
+                // Pulsing red dot
+                var pulse = Math.sin(time / 300) * 0.3 + 0.7;
+                ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255,50,50,' + pulse + ')';
+                ctx.fill();
+                // Timer
+                var elapsed = Math.floor((time - S.recordStart) / 1000);
+                var mins = Math.floor(elapsed / 60);
+                var secs = elapsed % 60;
+                ctx.font = '10px ' + C.FONT;
+                ctx.fillStyle = C.DANGER;
+                ctx.textAlign = 'center';
+                ctx.fillText((mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs, x, y + r + 14);
+            } else {
+                // Static red dot
+                ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255,80,80,0.6)';
+                ctx.fill();
+                ctx.font = '8px ' + C.FONT;
+                ctx.fillStyle = C.DIM;
+                ctx.textAlign = 'center';
+                ctx.fillText('REC', x, y + r + 12);
+            }
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CURRENT PATH DRAWING (while pen is active)
+        // ═══════════════════════════════════════════════════════════
+
+        function drawCurrentPath(ctx) {
+            if (!S.currentPath || S.currentPath.points.length < 2) return;
+            ctx.save();
+            ctx.strokeStyle = S.currentPath.stroke;
+            ctx.lineWidth = S.currentPath.lineWidth;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.shadowColor = S.currentPath.stroke;
+            ctx.shadowBlur = 12;
+            ctx.beginPath();
+            ctx.moveTo(S.currentPath.points[0].x, S.currentPath.points[0].y);
+            for (var i = 1; i < S.currentPath.points.length; i++) {
+                ctx.lineTo(S.currentPath.points[i].x, S.currentPath.points[i].y);
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.restore();
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -1585,8 +1857,17 @@
             drawHUD(ctx, w, h, timestamp);
             ctx.globalAlpha = 1;
 
+            // Animate panels
+            S.toolPanelAnim += (S.toolPanelOpen ? 0.06 : -0.06);
+            S.toolPanelAnim = Math.max(0, Math.min(1, S.toolPanelAnim));
+            S.colorPanelAnim += (S.colorPanelOpen ? 0.06 : -0.06);
+            S.colorPanelAnim = Math.max(0, Math.min(1, S.colorPanelAnim));
+
             // Shapes
             S.shapes.forEach(function(s) { renderShape(ctx, s, timestamp); });
+
+            // Current pen path
+            drawCurrentPath(ctx);
 
             // Hand hover highlight
             drawHoveredHighlight(ctx);
@@ -1601,6 +1882,7 @@
             ctx.globalAlpha = fadeIn;
             drawToolbar(ctx);
             drawColorPalette(ctx);
+            drawRecordButton(ctx, timestamp);
             drawToast(ctx, w, timestamp);
             drawGestureHUD(ctx);
             ctx.globalAlpha = 1;
