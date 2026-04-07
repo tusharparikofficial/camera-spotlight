@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Spotlight</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #111;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            color: #eee;
+        }
+        h1 {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            letter-spacing: -0.5px;
+        }
+        #container {
+            position: relative;
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+        }
+        video { display: none; }
+        canvas { display: block; border-radius: 14px; }
+        #status {
+            margin-top: 14px;
+            font-size: 14px;
+            color: #888;
+            min-height: 20px;
+        }
+        .gesture-guide {
+            margin-top: 14px;
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+            color: #555;
+        }
+        .gesture-guide div {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .gesture-guide .icon {
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Camera Spotlight</h1>
+    <div id="container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas" width="640" height="480"></canvas>
+    </div>
+    <div id="status">Loading hand tracking...</div>
+    <div class="gesture-guide">
+        <div><span class="icon">&#x1F44D;</span> Thumbs up = Freeze</div>
+        <div><span class="icon">&#x270A;</span> Fists = Reset</div>
+        <div><span class="icon">&#x1F91F;</span> Pinkies out = Record</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+
+    <script>
+    (function() {
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+
+        let frozen = false;
+        let frozenFrame = null;
+        let boundingBox = null;
+        let recording = false;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+
+        // Smoothing
+        let smoothBox = null;
+        const SMOOTH = 0.35;
+        function lerp(a, b, t) { return a + (b - a) * t; }
+        function smoothBoundingBox(raw) {
+            if (!smoothBox) { smoothBox = { ...raw }; return smoothBox; }
+            smoothBox.x = lerp(smoothBox.x, raw.x, SMOOTH);
+            smoothBox.y = lerp(smoothBox.y, raw.y, SMOOTH);
+            smoothBox.w = lerp(smoothBox.w, raw.w, SMOOTH);
+            smoothBox.h = lerp(smoothBox.h, raw.h, SMOOTH);
+            return smoothBox;
+        }
+
+        // ── Gesture detection ──────────────────────────────────
+        // MediaPipe landmark indices:
+        // 0=wrist, 4=thumb tip, 3=thumb IP, 2=thumb MCP
+        // 5=index MCP, 6=index PIP, 8=index tip
+        // 9=middle MCP, 10=middle PIP, 12=middle tip
+        // 13=ring MCP, 14=ring PIP, 16=ring tip
+        // 17=pinky MCP, 18=pinky PIP, 20=pinky tip
+
+        function isFingerExtended(hand, tipIdx, pipIdx, mcpIdx) {
+            // A finger is extended if tip is farther from wrist than PIP
+            const wrist = hand[0];
+            const tipDist = Math.hypot(hand[tipIdx].x - wrist.x, hand[tipIdx].y - wrist.y);
+            const pipDist = Math.hypot(hand[pipIdx].x - wrist.x, hand[pipIdx].y - wrist.y);
+            return tipDist > pipDist * 1.05;
+        }
+
+        function isFingerCurled(hand, tipIdx, pipIdx) {
+            const wrist = hand[0];
+            const tipDist = Math.hypot(hand[tipIdx].x - wrist.x, hand[tipIdx].y - wrist.y);
+            const pipDist = Math.hypot(hand[pipIdx].x - wrist.x, hand[pipIdx].y - wrist.y);
+            return tipDist < pipDist * 1.0;
+        }
+
+        function isThumbUp(hand) {
+            // Thumb tip is well above (lower y) the index MCP, and thumb is extended
+            const thumbTip = hand[4];
+            const indexMcp = hand[5];
+            const thumbMcp = hand[2];
+            // Thumb pointing upward: tip.y significantly less than base
+            return (indexMcp.y - thumbTip.y) > 0.06 && (thumbMcp.y - thumbTip.y) > 0.04;
+        }
+
+        function isFist(hand) {
+            // All four fingers curled (index, middle, ring, pinky)
+            return isFingerCurled(hand, 8, 6) &&
+                   isFingerCurled(hand, 12, 10) &&
+                   isFingerCurled(hand, 16, 14) &&
+                   isFingerCurled(hand, 20, 18);
+        }
+
+        function isPinkyOut(hand) {
+            // Pinky extended, middle and ring curled
+            return isFingerExtended(hand, 20, 18, 17) &&
+                   isFingerCurled(hand, 12, 10) &&
+                   isFingerCurled(hand, 16, 14);
+        }
+
+        // ── Gesture state with debounce ────────────────────────
+        const HOLD_FRAMES = 15; // ~0.5s at 30fps
+        let gestureCounters = { thumbsUp: 0, fists: 0, pinkies: 0 };
+        let gestureCooldown = 0; // prevent rapid re-triggers
+
+        function checkGestures(hands) {
+            if (gestureCooldown > 0) { gestureCooldown--; return; }
+            if (!hands || hands.length < 2) {
+                gestureCounters.thumbsUp = 0;
+                gestureCounters.fists = 0;
+                gestureCounters.pinkies = 0;
+                return;
+            }
+
+            const h1 = hands[0], h2 = hands[1];
+
+            // Thumbs up on both hands → Freeze
+            if (isThumbUp(h1) && isThumbUp(h2)) {
+                gestureCounters.thumbsUp++;
+                if (gestureCounters.thumbsUp >= HOLD_FRAMES && !frozen && boundingBox) {
+                    freeze();
+                    gestureCooldown = 30;
+                    gestureCounters.thumbsUp = 0;
+                }
+            } else {
+                gestureCounters.thumbsUp = 0;
+            }
+
+            // Fists on both hands → Reset
+            if (isFist(h1) && isFist(h2)) {
+                gestureCounters.fists++;
+                if (gestureCounters.fists >= HOLD_FRAMES) {
+                    reset();
+                    gestureCooldown = 30;
+                    gestureCounters.fists = 0;
+                }
+            } else {
+                gestureCounters.fists = 0;
+            }
+
+            // Pinkies out on both hands → Toggle record
+            if (isPinkyOut(h1) && isPinkyOut(h2)) {
+                gestureCounters.pinkies++;
+                if (gestureCounters.pinkies >= HOLD_FRAMES) {
+                    toggleRecord();
+                    gestureCooldown = 30;
+                    gestureCounters.pinkies = 0;
+                }
+            } else {
+                gestureCounters.pinkies = 0;
+            }
+        }
+
+        // ── Draw gesture progress HUD ──────────────────────────
+        function drawGestureHUD() {
+            const items = [
+                { label: 'FREEZE',  count: gestureCounters.thumbsUp, color: '#00ff88', active: !frozen && !!boundingBox },
+                { label: 'RESET',   count: gestureCounters.fists,    color: '#ffaa00', active: true },
+                { label: recording ? 'STOP REC' : 'RECORD', count: gestureCounters.pinkies, color: '#ff4444', active: true },
+            ];
+
+            const barW = 80, barH = 6, startX = 12, startY = 16;
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textBaseline = 'top';
+
+            items.forEach((item, i) => {
+                if (item.count <= 0) return;
+                const x = startX;
+                const y = startY + i * 24;
+                const progress = Math.min(item.count / HOLD_FRAMES, 1);
+
+                // Label
+                ctx.fillStyle = item.color;
+                ctx.fillText(item.label, x, y);
+
+                // Background bar
+                ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                roundRect(ctx, x + 70, y + 1, barW, barH, 3);
+                ctx.fill();
+
+                // Progress bar
+                ctx.fillStyle = item.color;
+                roundRect(ctx, x + 70, y + 1, barW * progress, barH, 3);
+                ctx.fill();
+            });
+        }
+
+        // ── MediaPipe setup ────────────────────────────────────
+        const mpHands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
+        });
+        mpHands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.5
+        });
+        mpHands.onResults(onResults);
+
+        function onResults(results) {
+            const w = canvas.width;
+            const h = canvas.height;
+            const handsData = results.multiHandLandmarks;
+
+            if (!frozen) {
+                // Draw live mirrored camera
+                ctx.save();
+                ctx.translate(w, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(results.image, 0, 0, w, h);
+                ctx.restore();
+
+                if (handsData && handsData.length === 2) {
+                    const hand1 = handsData[0], hand2 = handsData[1];
+
+                    // Index finger tips define box corners
+                    const x1 = (1 - hand1[8].x) * w;
+                    const y1 = hand1[8].y * h;
+                    const x2 = (1 - hand2[8].x) * w;
+                    const y2 = hand2[8].y * h;
+
+                    const boxW = Math.abs(x2 - x1);
+                    const boxH = Math.abs(y2 - y1);
+
+                    if (boxW > 30 && boxH > 30) {
+                        const rawBox = {
+                            x: Math.min(x1, x2),
+                            y: Math.min(y1, y2),
+                            w: boxW,
+                            h: boxH
+                        };
+                        boundingBox = smoothBoundingBox(rawBox);
+                        drawBoundingBoxPreview(boundingBox, x1, y1, x2, y2);
+                        statusEl.textContent = `Box: ${Math.round(boundingBox.w)}x${Math.round(boundingBox.h)} — Thumbs up to freeze`;
+                    } else {
+                        statusEl.textContent = 'Move hands further apart';
+                    }
+                } else if (handsData && handsData.length === 1) {
+                    statusEl.textContent = 'Show both hands — index fingers define the box corners';
+                } else {
+                    statusEl.textContent = 'Show both hands to start';
+                }
+            } else {
+                renderFrozenView(results.image);
+            }
+
+            // Always check gestures (even when frozen, for reset/record)
+            checkGestures(handsData);
+            drawGestureHUD();
+        }
+
+        // ── Drawing helpers ────────────────────────────────────
+        function drawBoundingBoxPreview(box, x1, y1, x2, y2) {
+            // Dim outside
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+            ctx.fillRect(0, 0, canvas.width, box.y);
+            ctx.fillRect(0, box.y + box.h, canvas.width, canvas.height - box.y - box.h);
+            ctx.fillRect(0, box.y, box.x, box.h);
+            ctx.fillRect(box.x + box.w, box.y, canvas.width - box.x - box.w, box.h);
+
+            // Dashed border
+            ctx.strokeStyle = '#00ff88';
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([10, 5]);
+            ctx.strokeRect(box.x, box.y, box.w, box.h);
+            ctx.setLineDash([]);
+
+            // Finger dots
+            drawDot(x1, y1, '#ff5555', 7);
+            drawDot(x2, y2, '#5599ff', 7);
+        }
+
+        function drawDot(x, y, color, r) {
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        function roundRect(ctx, x, y, w, h, r) {
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.arcTo(x + w, y, x + w, y + r, r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+            ctx.lineTo(x + r, y + h);
+            ctx.arcTo(x, y + h, x, y + h - r, r);
+            ctx.lineTo(x, y + r);
+            ctx.arcTo(x, y, x + r, y, r);
+            ctx.closePath();
+        }
+
+        // ── Actions ────────────────────────────────────────────
+        function freeze() {
+            if (!boundingBox || frozen) return;
+            frozen = true;
+            frozenFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            statusEl.textContent = 'Frozen — fists to reset, pinkies to record';
+        }
+
+        function renderFrozenView(liveImage) {
+            const w = canvas.width;
+            const h = canvas.height;
+            const box = boundingBox;
+
+            // Frozen background darkened
+            ctx.putImageData(frozenFrame, 0, 0);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.fillRect(0, 0, w, h);
+
+            // Live feed clipped to box
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(box.x, box.y, box.w, box.h);
+            ctx.clip();
+            ctx.translate(w, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(liveImage, 0, 0, w, h);
+            ctx.restore();
+
+            // Border
+            ctx.strokeStyle = '#00ff88';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(box.x, box.y, box.w, box.h);
+
+            // LIVE badge
+            const badgeX = box.x, badgeY = box.y - 26;
+            ctx.fillStyle = '#e00';
+            roundRect(ctx, badgeX, badgeY, 50, 22, 4);
+            ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(' LIVE', badgeX + 4, badgeY + 11);
+
+            // REC indicator
+            if (recording) {
+                const pulse = Math.sin(Date.now() / 300) * 0.5 + 0.5;
+                ctx.fillStyle = `rgba(255, 0, 0, ${0.6 + pulse * 0.4})`;
+                ctx.beginPath();
+                ctx.arc(box.x + box.w - 12, badgeY + 11, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.fillText('REC', box.x + box.w - 42, badgeY + 12);
+            }
+        }
+
+        function reset() {
+            frozen = false;
+            frozenFrame = null;
+            boundingBox = null;
+            smoothBox = null;
+            if (recording) toggleRecord(); // stop recording on reset
+            statusEl.textContent = 'Show both hands to start';
+        }
+
+        function toggleRecord() {
+            if (!recording) {
+                const stream = canvas.captureStream(30);
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+                recordedChunks = [];
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) recordedChunks.push(e.data);
+                };
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'spotlight-' + Date.now() + '.webm';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                };
+                mediaRecorder.start(100);
+                recording = true;
+                statusEl.textContent = 'Recording... pinkies out again to stop';
+            } else {
+                mediaRecorder.stop();
+                recording = false;
+                statusEl.textContent = frozen ? 'Frozen — fists to reset, pinkies to record' : 'Show both hands to start';
+            }
+        }
+
+        // ── Start camera ───────────────────────────────────────
+        const camera = new Camera(video, {
+            onFrame: async () => { await mpHands.send({ image: video }); },
+            width: 640,
+            height: 480
+        });
+
+        camera.start().then(() => {
+            statusEl.textContent = 'Camera ready — show both hands';
+        }).catch((err) => {
+            statusEl.textContent = 'Camera access denied: ' + err.message;
+        });
+    })();
+    </script>
+</body>
+</html>
