@@ -77,6 +77,13 @@
             gestureCooldown: 0,
             gestureCounters: { pinch: 0, fists: 0 },
             ghostShape: null,
+            // Hand interaction
+            handCursor: null,
+            handMode: 'idle', // 'idle'|'grabbing'|'two_hand'|'cooldown'
+            handDragStart: null,
+            handManipStart: null,
+            handPrevPinch: [false, false],
+            handHoveredId: null,
         };
 
         // ═══════════════════════════════════════════════════════════
@@ -916,69 +923,203 @@
         }
 
         // ═══════════════════════════════════════════════════════════
-        // GESTURE PROCESSING
+        // GESTURE PROCESSING (FULL HAND INTERACTION)
         // ═══════════════════════════════════════════════════════════
 
+        function handPos(hand, idx) {
+            return { x: (1 - hand[idx].x) * S.w, y: hand[idx].y * S.h };
+        }
+
         function processGestures(hands) {
-            if (S.gestureCooldown > 0) { S.gestureCooldown--; return; }
             if (!hands || hands.length === 0) {
+                S.handCursor = null;
+                S.handHoveredId = null;
+                S.ghostShape = null;
+                if (S.handMode === 'grabbing') pushUndo();
+                if (S.handMode === 'two_hand') pushUndo();
+                S.handMode = 'idle';
                 S.gestureCounters.pinch = 0;
                 S.gestureCounters.fists = 0;
-                S.ghostShape = null;
+                S.handPrevPinch = [false, false];
                 return;
             }
 
+            if (S.mouse.down) return; // mouse takes priority
+
             var w = S.w, h = S.h;
+            var h1 = hands[0];
+            var pinch1 = isPinching(h1);
+            var prevP1 = S.handPrevPinch[0];
+            var pinchStart1 = pinch1 && !prevP1;
+            var pinchEnd1 = !pinch1 && prevP1;
 
+            // Always track hand cursor from index fingertip
+            S.handCursor = handPos(h1, 8);
+
+            // Hover detection
+            S.handHoveredId = null;
+            var hovered = getShapeAt(S.handCursor.x, S.handCursor.y);
+            if (hovered) S.handHoveredId = hovered.id;
+
+            // ── TWO HANDS ──
             if (hands.length >= 2) {
-                var h1 = hands[0], h2 = hands[1];
+                var h2 = hands[1];
+                var pinch2 = isPinching(h2);
+                var prevP2 = S.handPrevPinch[1];
+                var pinchStart2 = pinch2 && !prevP2;
+                S.handPrevPinch = [pinch1, pinch2];
 
-                // Two hands index pointing -> ghost shape
+                var p1 = handPos(h1, 8);
+                var p2 = handPos(h2, 8);
+
+                // Two hands pointing → ghost shape for creation
                 if (isIndexPointing(h1) && isIndexPointing(h2)) {
-                    var x1 = (1 - h1[8].x) * w, y1 = h1[8].y * h;
-                    var x2 = (1 - h2[8].x) * w, y2 = h2[8].y * h;
-                    var sz = dist(x1, y1, x2, y2);
+                    var sz = dist(p1.x, p1.y, p2.x, p2.y);
                     if (sz > 30) {
                         var gtype = S.activeTool === 'select' ? 'circle' : S.activeTool;
-                        S.ghostShape = { x: (x1 + x2) / 2, y: (y1 + y2) / 2, size: sz, type: gtype, p1x: x1, p1y: y1, p2x: x2, p2y: y2 };
+                        S.ghostShape = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2, size: sz, type: gtype, p1x: p1.x, p1y: p1.y, p2x: p2.x, p2y: p2.y };
                     }
-                } else {
+                } else if (!pinch1 || !pinch2) {
                     S.ghostShape = null;
                 }
 
-                // Two pinch -> place ghost shape
-                if (isPinching(h1) && isPinching(h2) && S.ghostShape) {
-                    S.gestureCounters.pinch++;
-                    if (S.gestureCounters.pinch >= C.HOLD_FRAMES) {
-                        var g = S.ghostShape;
-                        var ns = createShape(g.type, g.x, g.y, { size: g.size, width: g.size, height: g.size * 0.75 });
-                        addShape(ns);
-                        S.selectedIds.clear();
-                        selectShape(ns.id, false);
-                        S.ghostShape = null;
-                        S.gestureCooldown = 25;
-                        S.gestureCounters.pinch = 0;
-                        showToast('Shape placed');
+                // Both pinching
+                if (pinch1 && pinch2) {
+                    // Place ghost shape
+                    if (S.ghostShape) {
+                        S.gestureCounters.pinch++;
+                        if (S.gestureCounters.pinch >= C.HOLD_FRAMES) {
+                            var g = S.ghostShape;
+                            var ns = createShape(g.type, g.x, g.y, { size: g.size, width: g.size, height: g.size * 0.75 });
+                            addShape(ns);
+                            S.selectedIds.clear();
+                            selectShape(ns.id, false);
+                            S.ghostShape = null;
+                            S.gestureCounters.pinch = 0;
+                            S.handMode = 'cooldown';
+                            setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 500);
+                            showToast('Shape placed');
+                        }
+                    }
+                    // Two-hand resize/rotate on selected shapes
+                    else if (S.selectedIds.size > 0) {
+                        var curDist = dist(p1.x, p1.y, p2.x, p2.y);
+                        var curAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+                        if (S.handMode !== 'two_hand') {
+                            S.handMode = 'two_hand';
+                            S.handManipStart = {
+                                dist: curDist, angle: curAngle,
+                                shapes: getSelected().map(function(s) {
+                                    return { id: s.id, size: s.size, width: s.width, height: s.height, rotation: s.rotation };
+                                })
+                            };
+                        } else {
+                            var ms = S.handManipStart;
+                            var scaleFactor = curDist / Math.max(ms.dist, 1);
+                            var angleDelta = curAngle - ms.angle;
+                            ms.shapes.forEach(function(orig) {
+                                var updates = { rotation: orig.rotation + angleDelta };
+                                var shape = S.shapes.find(function(s) { return s.id === orig.id; });
+                                if (!shape) return;
+                                if (shape.type === 'rect') {
+                                    updates.width = Math.max(20, orig.width * scaleFactor);
+                                    updates.height = Math.max(15, orig.height * scaleFactor);
+                                } else {
+                                    updates.size = Math.max(20, orig.size * scaleFactor);
+                                }
+                                updateShape(orig.id, updates);
+                            });
+                        }
                     }
                 } else {
                     S.gestureCounters.pinch = 0;
+                    if (S.handMode === 'two_hand') {
+                        pushUndo();
+                        S.handMode = 'idle';
+                    }
                 }
 
-                // Two fists -> reset
+                // Two fists → reset
                 if (isFist(h1) && isFist(h2)) {
                     S.gestureCounters.fists++;
                     if (S.gestureCounters.fists >= C.HOLD_FRAMES) {
                         resetAll();
-                        S.gestureCooldown = 30;
                         S.gestureCounters.fists = 0;
+                        S.handMode = 'idle';
                     }
                 } else {
                     S.gestureCounters.fists = 0;
                 }
-            } else {
-                S.ghostShape = null;
-                S.gestureCounters.pinch = 0;
-                S.gestureCounters.fists = 0;
+                return;
+            }
+
+            // ── SINGLE HAND ──
+            S.handPrevPinch = [pinch1, false];
+            S.ghostShape = null;
+            S.gestureCounters.pinch = 0;
+            S.gestureCounters.fists = 0;
+
+            if (S.handMode === 'cooldown') return;
+
+            // Pinch START → select/grab/create/toolbar
+            if (pinchStart1) {
+                var cx = S.handCursor.x, cy = S.handCursor.y;
+
+                // Toolbar click
+                if (handleToolbarClick(cx, cy)) {
+                    showToast('Tool: ' + S.activeTool.toUpperCase());
+                    S.handMode = 'cooldown';
+                    setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 400);
+                    return;
+                }
+                // Color palette click
+                if (handleColorClick(cx, cy)) {
+                    S.handMode = 'cooldown';
+                    setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 400);
+                    return;
+                }
+
+                // Select tool → grab shape
+                if (S.activeTool === 'select') {
+                    var hit = getShapeAt(cx, cy);
+                    if (hit) {
+                        if (!S.selectedIds.has(hit.id)) S.selectedIds.clear();
+                        selectShape(hit.id, false);
+                        S.handMode = 'grabbing';
+                        S.handDragStart = {
+                            x: cx, y: cy,
+                            shapes: getSelected().map(function(s) { return { id: s.id, x: s.x, y: s.y }; })
+                        };
+                        return;
+                    }
+                    deselectAll();
+                } else {
+                    // Draw tool → create shape at hand cursor
+                    if (cx > C.TOOLBAR_W && cx < S.w - 55) {
+                        var shape = createShape(S.activeTool, cx, cy);
+                        addShape(shape);
+                        S.selectedIds.clear();
+                        selectShape(shape.id, false);
+                        showToast(S.activeTool.toUpperCase() + ' created');
+                        S.handMode = 'cooldown';
+                        setTimeout(function() { if (S.handMode === 'cooldown') S.handMode = 'idle'; }, 400);
+                    }
+                }
+            }
+
+            // Pinching → drag if grabbing
+            if (pinch1 && S.handMode === 'grabbing' && S.handDragStart) {
+                var dx = S.handCursor.x - S.handDragStart.x;
+                var dy = S.handCursor.y - S.handDragStart.y;
+                S.handDragStart.shapes.forEach(function(ds) {
+                    updateShape(ds.id, { x: ds.x + dx, y: ds.y + dy });
+                });
+            }
+
+            // Pinch END → release grab
+            if (pinchEnd1 && S.handMode === 'grabbing') {
+                pushUndo();
+                S.handMode = 'idle';
             }
         }
 
@@ -1017,6 +1158,8 @@
             var items = [];
             if (S.gestureCounters.pinch > 0) items.push({ label: 'PLACING', count: S.gestureCounters.pinch, color: C.SUCCESS });
             if (S.gestureCounters.fists > 0) items.push({ label: 'RESET', count: S.gestureCounters.fists, color: C.DANGER });
+            if (S.handMode === 'grabbing') items.push({ label: 'DRAGGING', count: C.HOLD_FRAMES, color: C.SECONDARY });
+            if (S.handMode === 'two_hand') items.push({ label: 'TRANSFORM', count: C.HOLD_FRAMES, color: C.ACCENT });
             if (items.length === 0) return;
 
             ctx.save();
@@ -1062,6 +1205,91 @@
             ctx.beginPath(); ctx.arc(x, y, sz + 4, t, t + Math.PI / 2); ctx.stroke();
             ctx.beginPath(); ctx.arc(x, y, sz + 4, t + Math.PI, t + Math.PI * 1.5); ctx.stroke();
 
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // HAND CURSOR
+        // ═══════════════════════════════════════════════════════════
+
+        function drawHandCursor(ctx, time) {
+            if (!S.handCursor) return;
+            var x = S.handCursor.x, y = S.handCursor.y;
+            var grabbing = S.handMode === 'grabbing';
+            var twoHand = S.handMode === 'two_hand';
+            var hovering = S.handHoveredId !== null;
+            var t = time * 0.004;
+
+            ctx.save();
+
+            // Outer ring - changes based on state
+            var ringR = grabbing ? 22 : (hovering ? 20 : 16);
+            var ringColor = grabbing ? C.SECONDARY : (hovering ? C.SUCCESS : C.PRIMARY);
+            ctx.strokeStyle = ringColor;
+            ctx.lineWidth = grabbing ? 2.5 : 1.5;
+            ctx.shadowColor = ringColor;
+            ctx.shadowBlur = grabbing ? 20 : 10;
+
+            // Rotating segmented ring
+            for (var i = 0; i < 4; i++) {
+                var start = t + i * Math.PI / 2;
+                var span = grabbing ? Math.PI / 3 : Math.PI / 4;
+                ctx.beginPath();
+                ctx.arc(x, y, ringR, start, start + span);
+                ctx.stroke();
+            }
+
+            // Inner dot
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(x, y, grabbing ? 4 : 3, 0, Math.PI * 2);
+            ctx.fillStyle = ringColor;
+            ctx.fill();
+
+            // Grab indicator - filled ring when grabbing
+            if (grabbing) {
+                ctx.globalAlpha = 0.15;
+                ctx.beginPath();
+                ctx.arc(x, y, ringR, 0, Math.PI * 2);
+                ctx.fillStyle = C.SECONDARY;
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+
+            // Two-hand indicator
+            if (twoHand) {
+                ctx.font = 'bold 10px ' + C.FONT;
+                ctx.fillStyle = C.SECONDARY;
+                ctx.textAlign = 'center';
+                ctx.fillText('RESIZE / ROTATE', x, y - ringR - 8);
+            }
+
+            // Hover label
+            if (hovering && !grabbing) {
+                ctx.font = '9px ' + C.FONT;
+                ctx.fillStyle = C.SUCCESS;
+                ctx.textAlign = 'center';
+                ctx.fillText('PINCH TO GRAB', x, y + ringR + 14);
+            }
+
+            ctx.restore();
+        }
+
+        function drawHoveredHighlight(ctx) {
+            if (!S.handHoveredId || S.selectedIds.has(S.handHoveredId)) return;
+            var shape = S.shapes.find(function(s) { return s.id === S.handHoveredId; });
+            if (!shape) return;
+            var hw = shape.type === 'rect' ? shape.width / 2 : shape.size / 2;
+            var hh = shape.type === 'rect' ? shape.height / 2 : shape.size / 2;
+            ctx.save();
+            ctx.translate(shape.x, shape.y);
+            ctx.rotate(shape.rotation);
+            ctx.strokeStyle = C.SUCCESS;
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 0.5;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(-hw - 6, -hh - 6, (hw + 6) * 2, (hh + 6) * 2);
+            ctx.setLineDash([]);
             ctx.restore();
         }
 
@@ -1360,6 +1588,9 @@
             // Shapes
             S.shapes.forEach(function(s) { renderShape(ctx, s, timestamp); });
 
+            // Hand hover highlight
+            drawHoveredHighlight(ctx);
+
             // Ghost shape
             drawGhostShape(ctx);
 
@@ -1374,7 +1605,10 @@
             drawGestureHUD(ctx);
             ctx.globalAlpha = 1;
 
-            // Cursor
+            // Hand cursor (above everything)
+            drawHandCursor(ctx, timestamp);
+
+            // Mouse cursor
             drawCursor(ctx);
 
             requestAnimationFrame(renderLoop);
