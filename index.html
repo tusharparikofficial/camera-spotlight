@@ -11,6 +11,63 @@
         #video { display: none; }
         #canvas { display: block; width: 100vw; height: 100vh; cursor: none; }
         #file-input { display: none; }
+
+        /* ── Pairing Overlay ── */
+        #pair-overlay, #mobile-ui {
+            display: none; position: fixed; inset: 0; z-index: 200;
+            background: rgba(8,8,16,0.95);
+            font-family: 'Courier New', Consolas, monospace;
+            color: #00ffff;
+        }
+        .p-card, .m-card {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%,-50%);
+            text-align: center; padding: 40px;
+            border: 1px solid rgba(0,255,255,0.2);
+            border-radius: 12px;
+            background: rgba(0,20,40,0.6);
+            backdrop-filter: blur(20px);
+            min-width: 320px;
+        }
+        .p-title, .m-title {
+            font-size: 14px; letter-spacing: 4px; opacity: 0.7;
+            margin-bottom: 24px;
+        }
+        .p-code {
+            font-size: 48px; font-weight: bold; letter-spacing: 12px;
+            color: #00ffff; margin: 20px 0;
+            text-shadow: 0 0 30px rgba(0,255,255,0.5);
+        }
+        .p-hint { font-size: 12px; color: rgba(255,255,255,0.4); margin: 16px 0; line-height: 1.6; }
+        .p-status, .m-status {
+            font-size: 12px; margin: 16px 0; min-height: 18px;
+            color: rgba(0,255,255,0.6);
+        }
+        .p-status.connected, .m-status.connected { color: #00ff88; }
+        .holo-btn {
+            background: transparent; border: 1px solid rgba(0,255,255,0.4);
+            color: #00ffff; padding: 10px 28px; font-family: inherit;
+            font-size: 13px; cursor: pointer; border-radius: 4px;
+            letter-spacing: 2px; margin: 6px;
+            transition: all 0.2s;
+        }
+        .holo-btn:hover { background: rgba(0,255,255,0.1); border-color: #00ffff; }
+        .holo-btn.danger { border-color: rgba(255,60,60,0.4); color: #ff5555; }
+        .holo-btn.danger:hover { background: rgba(255,60,60,0.1); }
+        .m-input {
+            background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3);
+            color: #00ffff; padding: 14px 20px; font-family: inherit;
+            font-size: 32px; text-align: center; letter-spacing: 10px;
+            border-radius: 6px; width: 240px; outline: none;
+        }
+        .m-input:focus { border-color: #00ffff; box-shadow: 0 0 20px rgba(0,255,255,0.2); }
+        .m-input::placeholder { color: rgba(0,255,255,0.2); letter-spacing: 2px; font-size: 14px; }
+        #mobile-preview {
+            width: 280px; height: 210px; border-radius: 8px;
+            border: 1px solid rgba(0,255,255,0.2); background: #000;
+            margin: 16px auto; display: none; object-fit: cover;
+        }
+        #mobile-preview.active { display: block; }
     </style>
 </head>
 <body>
@@ -18,6 +75,33 @@
     <canvas id="canvas"></canvas>
     <input type="file" id="file-input" accept=".json">
 
+    <!-- Desktop Pairing Overlay -->
+    <div id="pair-overlay">
+        <div class="p-card">
+            <div class="p-title">P A I R &nbsp; D E V I C E</div>
+            <div>Open on your phone:</div>
+            <div style="color:#ffaa00;font-size:16px;margin:8px 0;">jarvis.tuxy.online</div>
+            <div style="font-size:11px;opacity:0.4;margin-bottom:16px;">Then enter this code:</div>
+            <div class="p-code" id="pair-code-display">------</div>
+            <div class="p-status" id="p-status">Generating code...</div>
+            <button class="holo-btn danger" id="pair-cancel">CANCEL</button>
+        </div>
+    </div>
+
+    <!-- Mobile UI -->
+    <div id="mobile-ui">
+        <div class="m-card">
+            <div class="m-title">J.A.R.V.I.S. &nbsp; R E M O T E</div>
+            <video id="mobile-preview" autoplay playsinline muted></video>
+            <div style="margin:16px 0;">
+                <input class="m-input" id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code">
+            </div>
+            <button class="holo-btn" id="pair-connect">C O N N E C T</button>
+            <div class="m-status" id="m-status">Enter the 6-digit code from your desktop</div>
+        </div>
+    </div>
+
+    <script src="lib/peerjs/peerjs.min.js"></script>
     <script src="lib/hands/hands.js"></script>
     <script src="lib/camera_utils/camera_utils.js"></script>
 
@@ -98,6 +182,14 @@
             mediaRecorder: null,
             recordedChunks: [],
             recordStart: 0,
+            // Pairing
+            peer: null,
+            pairCode: null,
+            remoteConnected: false,
+            remoteVideo: null,
+            localCamera: null,
+            usingRemoteCamera: false,
+            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
         };
 
         // ═══════════════════════════════════════════════════════════
@@ -625,8 +717,9 @@
                 'RES: ' + w + 'x' + h,
                 'OBJ: ' + S.shapes.length,
                 'SEL: ' + S.selectedIds.size,
-                'CAM: ' + (S.cameraReady ? 'ONLINE' : 'OFFLINE'),
+                'CAM: ' + (S.usingRemoteCamera ? 'PHONE' : (S.cameraReady ? 'LOCAL' : 'OFFLINE')),
                 'TRACK: ' + (S.handData && S.handData.length ? S.handData.length + ' hand(s)' : 'N/A'),
+                S.remoteConnected ? 'PAIR: CONNECTED' : '',
             ];
             reads.forEach(function(t, i) {
                 ctx.fillText(t, C.TOOLBAR_W + 14, h - 16 - (reads.length - 1 - i) * 14);
@@ -1550,6 +1643,8 @@
 
             // Record button
             if (dist(x, y, S.w - 35, 35) < 22) { toggleRecording(); return; }
+            // Pair button
+            if (handlePairButtonClick(x, y)) return;
 
             // Toolbar
             if (handleToolbarClick(x, y)) return;
@@ -1883,6 +1978,7 @@
             drawToolbar(ctx);
             drawColorPalette(ctx);
             drawRecordButton(ctx, timestamp);
+            drawPairButton(ctx, timestamp);
             drawToast(ctx, w, timestamp);
             drawGestureHUD(ctx);
             ctx.globalAlpha = 1;
@@ -1927,10 +2023,244 @@
         }
 
         // ═══════════════════════════════════════════════════════════
+        // PAIRING (WebRTC via PeerJS)
+        // ═══════════════════════════════════════════════════════════
+
+        function generatePairCode() {
+            return String(Math.floor(100000 + Math.random() * 900000));
+        }
+
+        // ── Desktop: start pairing, show code, wait for phone ──
+        function startPairing() {
+            var code = generatePairCode();
+            S.pairCode = code;
+            document.getElementById('pair-code-display').textContent = code;
+            document.getElementById('p-status').textContent = 'Waiting for connection...';
+            document.getElementById('p-status').className = 'p-status';
+            document.getElementById('pair-overlay').style.display = 'block';
+
+            if (S.peer) S.peer.destroy();
+            S.peer = new Peer('jarvis-' + code);
+
+            S.peer.on('open', function() {
+                document.getElementById('p-status').textContent = 'Code active — waiting for phone...';
+            });
+            S.peer.on('error', function(err) {
+                document.getElementById('p-status').textContent = 'Error: ' + err.type;
+            });
+            S.peer.on('call', function(call) {
+                call.answer(); // no stream sent back
+                call.on('stream', function(remoteStream) {
+                    onRemoteCameraConnected(remoteStream);
+                    document.getElementById('pair-overlay').style.display = 'none';
+                });
+                call.on('close', function() { onRemoteCameraDisconnected(); });
+            });
+        }
+
+        function cancelPairing() {
+            document.getElementById('pair-overlay').style.display = 'none';
+            if (S.peer) { S.peer.destroy(); S.peer = null; }
+            S.pairCode = null;
+        }
+
+        function onRemoteCameraConnected(stream) {
+            // Create video element for remote stream
+            S.remoteVideo = document.createElement('video');
+            S.remoteVideo.srcObject = stream;
+            S.remoteVideo.autoplay = true;
+            S.remoteVideo.playsInline = true;
+            S.remoteVideo.muted = true;
+            S.remoteVideo.play();
+
+            // Stop local camera processing
+            if (S.localCamera && S.localCamera.stop) S.localCamera.stop();
+            S.usingRemoteCamera = true;
+            S.remoteConnected = true;
+
+            // Start processing remote video through MediaPipe
+            S.remoteVideo.onloadeddata = function() {
+                processRemoteFrames();
+            };
+            showToast('Phone camera connected!');
+        }
+
+        function processRemoteFrames() {
+            if (!S.usingRemoteCamera || !S.remoteVideo || S.remoteVideo.paused) return;
+            if (mpHands) {
+                mpHands.send({ image: S.remoteVideo }).then(function() {
+                    if (S.usingRemoteCamera) requestAnimationFrame(processRemoteFrames);
+                });
+            }
+        }
+
+        function onRemoteCameraDisconnected() {
+            S.usingRemoteCamera = false;
+            S.remoteConnected = false;
+            if (S.remoteVideo) {
+                S.remoteVideo.srcObject = null;
+                S.remoteVideo = null;
+            }
+            // Restart local camera
+            startLocalCamera();
+            showToast('Phone disconnected — local camera');
+        }
+
+        function disconnectRemote() {
+            if (S.peer) { S.peer.destroy(); S.peer = null; }
+            onRemoteCameraDisconnected();
+        }
+
+        // ── Mobile: connect to desktop, send camera ──
+        function initMobileUI() {
+            document.getElementById('mobile-ui').style.display = 'block';
+            document.getElementById('canvas').style.display = 'none';
+
+            document.getElementById('pair-connect').onclick = function() {
+                var code = document.getElementById('pair-input').value.trim();
+                if (code.length !== 6) {
+                    document.getElementById('m-status').textContent = 'Enter a 6-digit code';
+                    return;
+                }
+                connectToDesktop(code);
+            };
+
+            document.getElementById('pair-input').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') document.getElementById('pair-connect').click();
+            });
+        }
+
+        function connectToDesktop(code) {
+            var statusEl = document.getElementById('m-status');
+            var previewEl = document.getElementById('mobile-preview');
+            statusEl.textContent = 'Connecting...';
+
+            var peer = new Peer();
+            peer.on('open', function() {
+                navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: false
+                }).then(function(stream) {
+                    // Show preview
+                    previewEl.srcObject = stream;
+                    previewEl.classList.add('active');
+
+                    // Call desktop peer
+                    var call = peer.call('jarvis-' + code, stream);
+                    if (!call) {
+                        statusEl.textContent = 'Failed to connect. Check code.';
+                        return;
+                    }
+                    statusEl.textContent = 'Streaming to desktop...';
+                    statusEl.className = 'm-status connected';
+
+                    // Change button to disconnect
+                    var btn = document.getElementById('pair-connect');
+                    btn.textContent = 'D I S C O N N E C T';
+                    btn.className = 'holo-btn danger';
+                    btn.onclick = function() {
+                        call.close();
+                        stream.getTracks().forEach(function(t) { t.stop(); });
+                        previewEl.srcObject = null;
+                        previewEl.classList.remove('active');
+                        statusEl.textContent = 'Disconnected';
+                        statusEl.className = 'm-status';
+                        btn.textContent = 'C O N N E C T';
+                        btn.className = 'holo-btn';
+                        btn.onclick = function() {
+                            var c = document.getElementById('pair-input').value.trim();
+                            if (c.length === 6) connectToDesktop(c);
+                        };
+                        peer.destroy();
+                    };
+
+                    call.on('close', function() {
+                        statusEl.textContent = 'Desktop disconnected';
+                        statusEl.className = 'm-status';
+                    });
+                }).catch(function(err) {
+                    statusEl.textContent = 'Camera error: ' + err.message;
+                });
+            });
+            peer.on('error', function(err) {
+                statusEl.textContent = 'Connection failed: ' + err.type;
+            });
+        }
+
+        // ── Draw pair button on desktop HUD ──
+        function drawPairButton(ctx, time) {
+            var x = S.w - 90, y = 30, w = 44, h = 22;
+            var hov = pointInRect(S.mouse.x, S.mouse.y, x - 2, y - 2, w + 4, h + 4);
+            if (S.handCursor) hov = hov || pointInRect(S.handCursor.x, S.handCursor.y, x - 2, y - 2, w + 4, h + 4);
+
+            ctx.save();
+            if (S.remoteConnected) {
+                // Connected indicator
+                ctx.fillStyle = 'rgba(0,40,20,0.7)';
+                roundRect(ctx, x - 10, y - 2, w + 20, h + 4, 4); ctx.fill();
+                ctx.strokeStyle = C.SUCCESS; ctx.lineWidth = 1; ctx.stroke();
+                ctx.font = 'bold 9px ' + C.FONT;
+                ctx.fillStyle = C.SUCCESS;
+                ctx.textAlign = 'center';
+                ctx.fillText('PHONE', x + w / 2, y + 10);
+                ctx.fillText('LIVE', x + w / 2, y + 19);
+            } else {
+                ctx.fillStyle = hov ? 'rgba(0,20,40,0.8)' : 'rgba(0,15,30,0.6)';
+                roundRect(ctx, x, y, w, h, 4); ctx.fill();
+                ctx.strokeStyle = hov ? C.PRIMARY : 'rgba(0,255,255,0.3)';
+                ctx.lineWidth = 1; ctx.stroke();
+                ctx.font = '9px ' + C.FONT;
+                ctx.fillStyle = hov ? C.PRIMARY : C.DIM;
+                ctx.textAlign = 'center';
+                ctx.fillText('PAIR', x + w / 2, y + 14);
+            }
+            ctx.restore();
+        }
+
+        function handlePairButtonClick(x, y) {
+            var bx = S.w - 90, by = 30, bw = 44, bh = 22;
+            if (pointInRect(x, y, bx - 10, by - 2, bw + 20, bh + 4)) {
+                if (S.remoteConnected) {
+                    disconnectRemote();
+                } else {
+                    startPairing();
+                }
+                return true;
+            }
+            return false;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // LOCAL CAMERA START
+        // ═══════════════════════════════════════════════════════════
+
+        function startLocalCamera() {
+            var video = document.getElementById('video');
+            if (mpHands) {
+                S.localCamera = new Camera(video, {
+                    onFrame: function() { return mpHands.send({ image: video }); },
+                    width: 640, height: 480,
+                });
+                S.localCamera.start().then(function() {
+                    showToast('Camera online');
+                }).catch(function() {
+                    showToast('Camera offline — mouse mode');
+                });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
         // INIT
         // ═══════════════════════════════════════════════════════════
 
         function init() {
+            // Mobile detection → show mobile pairing UI
+            if (S.isMobile) {
+                initMobileUI();
+                return;
+            }
+
+            // Desktop init
             S.canvas = document.getElementById('canvas');
             S.ctx = S.canvas.getContext('2d');
 
@@ -1946,22 +2276,17 @@
             initInput();
             pushUndo();
 
-            // Start camera
-            var video = document.getElementById('video');
-            if (mpHands) {
-                var camera = new Camera(video, {
-                    onFrame: function() { return mpHands.send({ image: video }); },
-                    width: 640,
-                    height: 480,
-                });
-                camera.start().then(function() {
-                    showToast('Camera online');
-                }).catch(function() {
-                    showToast('Camera offline - mouse mode');
-                });
-            } else {
-                showToast('Mouse-only mode');
+            // Pairing overlay buttons
+            document.getElementById('pair-cancel').onclick = cancelPairing;
+
+            // Check URL for auto-pair code: ?pair=123456
+            var urlCode = new URLSearchParams(window.location.search).get('pair');
+            if (urlCode && urlCode.length === 6) {
+                // Auto-start pairing if code in URL
             }
+
+            // Start local camera
+            startLocalCamera();
 
             S.bootStart = performance.now();
             S.lastFpsTime = S.bootStart;
