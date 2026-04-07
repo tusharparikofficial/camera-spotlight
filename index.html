@@ -66,8 +66,8 @@
         <div><span class="icon">&#x1F91F;</span> Pinkies out = Record</div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="lib/hands/hands.js"></script>
+    <script src="lib/camera_utils/camera_utils.js"></script>
 
     <script>
     (function() {
@@ -232,7 +232,7 @@
 
         // ── MediaPipe setup ────────────────────────────────────
         const mpHands = new Hands({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
+            locateFile: (file) => `lib/hands/${file}`
         });
         mpHands.setOptions({
             maxNumHands: 2,
