@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS | Shadow Boxing</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #080810; }
+        body { font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
+        #video { display: none; }
+        #c { display: block; width: 100vw; height: 100vh; cursor: none; }
+        #cam-choice { display: none; position: fixed; inset: 0; z-index: 150; background: rgba(8,8,16,0.95); }
+        .cc-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); backdrop-filter: blur(20px); }
+        .cc-title { font-size: 14px; letter-spacing: 4px; opacity: 0.7; margin-bottom: 8px; }
+        .cc-sub { font-size: 11px; opacity: 0.4; margin-bottom: 24px; max-width: 400px; }
+        .cc-buttons { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+        .cc-btn { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 20px 30px; font-family: inherit; font-size: 14px; cursor: pointer; border-radius: 8px; transition: all 0.2s; min-width: 160px; }
+        .cc-btn:hover { background: rgba(0,255,255,0.1); border-color: #00ffff; box-shadow: 0 0 20px rgba(0,255,255,0.2); }
+        .cc-btn .icon { font-size: 32px; display: block; margin-bottom: 10px; }
+        .cc-btn .label { font-size: 11px; opacity: 0.6; margin-top: 6px; display: block; }
+        #pair-overlay { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(8,8,16,0.95); }
+        .p-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); backdrop-filter: blur(20px); min-width: 320px; }
+        #mobile-ui { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(8,8,16,0.95); }
+        .m-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); backdrop-filter: blur(20px); min-width: 320px; }
+        .holo-btn { background: transparent; border: 1px solid rgba(0,255,255,0.4); color: #00ffff; padding: 10px 28px; font-family: inherit; font-size: 13px; cursor: pointer; border-radius: 4px; letter-spacing: 2px; margin: 6px; }
+        .m-input { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 14px 20px; font-family: inherit; font-size: 32px; text-align: center; letter-spacing: 10px; border-radius: 6px; width: 240px; outline: none; }
+        #mobile-preview { width: 280px; height: 210px; border-radius: 8px; border: 1px solid rgba(0,255,255,0.2); background: #000; margin: 16px auto; display: none; object-fit: cover; }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="c"></canvas>
+
+    <div id="cam-choice">
+        <div class="cc-card">
+            <div class="cc-title">S H A D O W &nbsp; B O X I N G</div>
+            <div class="cc-sub">Throw punches with your fists! Block by raising hands. Dodge by leaning.</div>
+            <div class="cc-buttons">
+                <button class="cc-btn" id="cc-local"><span class="icon">&#x1F4F7;</span>LOCAL CAMERA<span class="label">Use webcam</span></button>
+                <button class="cc-btn" id="cc-phone"><span class="icon">&#x1F4F1;</span>PAIR PHONE<span class="label">Stream from phone</span></button>
+                <button class="cc-btn" id="cc-skip"><span class="icon">&#x2328;</span>KEYBOARD<span class="label">A/D=dodge Z/X=punch</span></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="pair-overlay">
+        <div class="p-card">
+            <div style="font-size:14px;letter-spacing:4px;opacity:0.7;margin-bottom:24px;">P A I R</div>
+            <div>Open: <span style="color:#ffaa00;">jarvis.tuxy.online/boxing</span></div>
+            <div style="font-size:11px;opacity:0.4;margin:12px 0;">Scan QR:</div>
+            <canvas id="qr-canvas" width="180" height="180" style="margin:0 auto 12px;display:block;border-radius:8px;"></canvas>
+            <div id="pair-code-display" style="font-size:42px;font-weight:bold;letter-spacing:10px;margin:12px 0;text-shadow:0 0 20px rgba(0,255,255,0.5);">------</div>
+            <div id="p-status" style="font-size:12px;color:rgba(0,255,255,0.6);">Generating...</div>
+            <button class="holo-btn" id="pair-cancel" style="border-color:rgba(255,60,60,0.4);color:#ff5555;margin-top:12px;">CANCEL</button>
+        </div>
+    </div>
+
+    <div id="mobile-ui">
+        <div class="m-card">
+            <div style="font-size:14px;letter-spacing:4px;opacity:0.7;margin-bottom:24px;">J.A.R.V.I.S. &nbsp; B O X I N G</div>
+            <div id="m-choice">
+                <div style="font-size:11px;opacity:0.5;margin-bottom:20px;">Choose how to play</div>
+                <button class="cc-btn" id="m-play-here" style="display:block;width:100%;margin:10px 0;padding:18px;font-size:14px;">PLAY ON THIS DEVICE</button>
+                <button class="cc-btn" id="m-pair-btn" style="display:block;width:100%;margin:10px 0;padding:18px;font-size:14px;">PAIR WITH DESKTOP</button>
+            </div>
+            <div id="m-pair-form" style="display:none;">
+                <video id="mobile-preview" autoplay playsinline muted></video>
+                <div style="margin:16px 0;"><input class="m-input" id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code"></div>
+                <button class="holo-btn" id="pair-connect">C O N N E C T</button>
+                <div id="m-status" style="font-size:12px;margin:16px 0;color:rgba(0,255,255,0.6);">Enter 6-digit code</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="lib/qrcode/qrcode.min.js"></script>
+    <script src="lib/peerjs/peerjs.min.js"></script>
+    <script src="lib/hands/hands.js"></script>
+    <script src="lib/camera_utils/camera_utils.js"></script>
+
+    <script>
+    (function() {
+        'use strict';
+        var F = "'Courier New',Consolas,monospace";
+        var PI = Math.PI, TAU = PI * 2;
+
+        // ═══════════════════════════════════════════════════════════
+        // STATE
+        // ═══════════════════════════════════════════════════════════
+        var S = {
+            canvas: null, ctx: null, w: 0, h: 0,
+            // Player
+            playerHP: 100, playerMaxHP: 100,
+            playerState: 'idle', // idle, blocking, dodgeL, dodgeR, punchL, punchR, hit, ko
+            playerStateTimer: 0,
+            leftFist: { x: 0, y: 0, prevX: 0, prevY: 0, velX: 0, velY: 0 },
+            rightFist: { x: 0, y: 0, prevX: 0, prevY: 0, velX: 0, velY: 0 },
+            fistSmooth: { lx: 0, ly: 0, rx: 0, ry: 0 },
+            playerDodge: 0, // -1 left, 0 center, 1 right
+            // Opponent
+            oppHP: 100, oppMaxHP: 100,
+            oppState: 'idle', // idle, windupL, windupR, punchL, punchR, hurt, stunned, ko
+            oppStateTimer: 0,
+            oppX: 0, oppY: 0, // sway offset
+            oppPattern: [],
+            oppPatternIdx: 0,
+            oppNextAction: 0, // timestamp
+            oppLevel: 1,
+            oppName: 'IRON FIST',
+            // Round
+            round: 1, maxRounds: 3,
+            roundTimer: 0, roundDuration: 60000,
+            // Game
+            playing: false, gameOver: false, winner: null,
+            countdown: 0, countdownStart: 0,
+            score: 0, combo: 0, maxCombo: 0,
+            // Effects
+            effects: [], // {type, x, y, time, text}
+            screenShake: 0,
+            // Camera
+            cameraImage: null, cameraReady: false,
+            handData: null, handTrackingReady: false,
+            // Pairing
+            peer: null, remoteVideo: null, usingRemoteCamera: false, localCamera: null,
+            // FPS
+            fps: 0, frameCount: 0, lastFpsTime: 0,
+            toast: null,
+        };
+
+        // ═══════════════════════════════════════════════════════════
+        // UTILS
+        // ═══════════════════════════════════════════════════════════
+        function showToast(t) { S.toast = { text: t, until: performance.now() + 2500 }; }
+        function lerp(a,b,t) { return a+(b-a)*t; }
+        function clamp(v,lo,hi) { return Math.max(lo,Math.min(hi,v)); }
+        function roundRect(ctx,x,y,w,h,r) { ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r); ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r); ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r); ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r); ctx.closePath(); }
+        function addEffect(type, x, y, text) { S.effects.push({ type:type, x:x, y:y, time:performance.now(), text:text||'' }); }
+
+        // ═══════════════════════════════════════════════════════════
+        // GAME LOGIC
+        // ═══════════════════════════════════════════════════════════
+
+        function startGame() {
+            S.playerHP = S.playerMaxHP;
+            S.oppHP = S.oppMaxHP;
+            S.round = 1; S.score = 0; S.combo = 0; S.maxCombo = 0;
+            S.playing = true; S.gameOver = false; S.winner = null;
+            S.oppState = 'idle'; S.playerState = 'idle';
+            S.effects = [];
+            setupOpponent();
+            startCountdown();
+        }
+
+        function setupOpponent() {
+            // Patterns get harder each round
+            var patterns = [
+                ['wait','wait','punchL','wait','punchR','wait'],
+                ['punchL','wait','punchR','punchL','wait','punchR','wait'],
+                ['punchL','punchR','wait','punchL','punchR','punchL','punchR','wait'],
+            ];
+            S.oppPattern = patterns[Math.min(S.round - 1, patterns.length - 1)];
+            S.oppPatternIdx = 0;
+            S.oppNextAction = performance.now() + 2000;
+            S.oppLevel = S.round;
+        }
+
+        function startCountdown() {
+            S.countdown = 3; S.countdownStart = performance.now();
+        }
+
+        function updateCountdown(now) {
+            if (S.countdown <= 0) return;
+            var elapsed = (now - S.countdownStart) / 1000;
+            S.countdown = Math.ceil(3 - elapsed);
+            if (S.countdown <= 0) {
+                S.countdown = 0;
+                S.roundTimer = now;
+            }
+        }
+
+        function updateOpponent(now) {
+            if (S.countdown > 0 || S.oppState === 'ko') return;
+            var dt = now - S.oppStateTimer;
+
+            switch (S.oppState) {
+                case 'idle':
+                    S.oppX = Math.sin(now * 0.002) * 10;
+                    S.oppY = Math.sin(now * 0.003) * 5;
+                    if (now > S.oppNextAction) {
+                        var action = S.oppPattern[S.oppPatternIdx % S.oppPattern.length];
+                        S.oppPatternIdx++;
+                        if (action === 'wait') {
+                            S.oppNextAction = now + 800 - S.oppLevel * 100;
+                        } else {
+                            S.oppState = action === 'punchL' ? 'windupL' : 'windupR';
+                            S.oppStateTimer = now;
+                        }
+                    }
+                    break;
+                case 'windupL': case 'windupR':
+                    var windupTime = Math.max(400, 700 - S.oppLevel * 80);
+                    if (dt > windupTime) {
+                        S.oppState = S.oppState === 'windupL' ? 'punchL' : 'punchR';
+                        S.oppStateTimer = now;
+                    }
+                    break;
+                case 'punchL': case 'punchR':
+                    if (dt > 200) {
+                        // Check if punch lands
+                        var blocked = S.playerState === 'blocking';
+                        var dodged = (S.oppState === 'punchL' && S.playerDodge > 0.5) ||
+                                     (S.oppState === 'punchR' && S.playerDodge < -0.5);
+                        if (!blocked && !dodged && S.playerState !== 'dodgeL' && S.playerState !== 'dodgeR') {
+                            var dmg = 8 + S.oppLevel * 2;
+                            S.playerHP = Math.max(0, S.playerHP - dmg);
+                            S.playerState = 'hit'; S.playerStateTimer = now;
+                            S.screenShake = 10;
+                            S.combo = 0;
+                            addEffect('hit', S.w / 2, S.h * 0.6, '-' + dmg);
+                            if (S.playerHP <= 0) {
+                                S.winner = 'opponent'; S.gameOver = true; S.playing = false;
+                                S.playerState = 'ko';
+                            }
+                        } else if (blocked) {
+                            addEffect('block', S.w / 2, S.h * 0.5, 'BLOCKED!');
+                            S.screenShake = 3;
+                        } else {
+                            addEffect('dodge', S.w / 2, S.h * 0.5, 'DODGED!');
+                            S.score += 20;
+                        }
+                        S.oppState = 'recover'; S.oppStateTimer = now;
+                    }
+                    break;
+                case 'recover':
+                    var recoverTime = Math.max(300, 600 - S.oppLevel * 50);
+                    if (dt > recoverTime) {
+                        S.oppState = 'idle'; S.oppNextAction = now + 500;
+                    }
+                    break;
+                case 'hurt':
+                    if (dt > 400) { S.oppState = 'idle'; S.oppNextAction = now + 300; }
+                    break;
+                case 'stunned':
+                    if (dt > 1500) { S.oppState = 'idle'; S.oppNextAction = now + 200; }
+                    break;
+            }
+        }
+
+        function playerPunch(side) {
+            if (S.countdown > 0 || !S.playing) return;
+            if (S.playerState === 'hit' || S.playerState === 'ko') return;
+
+            var canHit = S.oppState === 'recover' || S.oppState === 'idle' || S.oppState === 'stunned';
+            S.playerState = side === 'left' ? 'punchL' : 'punchR';
+            S.playerStateTimer = performance.now();
+
+            if (canHit && S.oppState !== 'hurt') {
+                var dmg = S.oppState === 'stunned' ? 20 : 10;
+                S.oppHP = Math.max(0, S.oppHP - dmg);
+                S.combo++;
+                if (S.combo > S.maxCombo) S.maxCombo = S.combo;
+                S.score += dmg * S.combo;
+                S.oppState = 'hurt'; S.oppStateTimer = performance.now();
+                S.screenShake = 6;
+                addEffect('punch', S.w / 2 + (side === 'left' ? -40 : 40), S.h * 0.3, S.combo > 1 ? 'x' + S.combo : '');
+
+                if (S.oppHP <= 0) {
+                    S.oppState = 'ko';
+                    if (S.round >= S.maxRounds) {
+                        S.winner = 'player'; S.gameOver = true; S.playing = false;
+                        showToast('KNOCKOUT!');
+                    } else {
+                        // Next round
+                        setTimeout(function() {
+                            S.round++;
+                            S.oppHP = S.oppMaxHP;
+                            S.oppState = 'idle';
+                            setupOpponent();
+                            startCountdown();
+                        }, 2000);
+                    }
+                }
+                // Stun after 3-hit combo
+                if (S.combo >= 3 && S.oppState !== 'ko') {
+                    S.oppState = 'stunned'; S.oppStateTimer = performance.now();
+                    addEffect('stun', S.w / 2, S.h * 0.2, 'STUNNED!');
+                }
+            } else {
+                S.combo = 0;
+                addEffect('miss', S.w / 2 + (side === 'left' ? -60 : 60), S.h * 0.4, 'MISS');
+            }
+        }
+
+        function updatePlayer(now) {
+            var dt = now - S.playerStateTimer;
+            if (S.playerState === 'hit' && dt > 300) S.playerState = 'idle';
+            if ((S.playerState === 'punchL' || S.playerState === 'punchR') && dt > 250) S.playerState = 'idle';
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // HAND TRACKING
+        // ═══════════════════════════════════════════════════════════
+
+        function isFingerCurled(h,t,p){var w=h[0];return Math.hypot(h[t].x-w.x,h[t].y-w.y)<Math.hypot(h[p].x-w.x,h[p].y-w.y);}
+        function isFist(h){return isFingerCurled(h,8,6)&&isFingerCurled(h,12,10)&&isFingerCurled(h,16,14)&&isFingerCurled(h,20,18);}
+
+        var PUNCH_VEL_THRESHOLD = 15;
+        var punchCooldown = [0, 0]; // left, right
+
+        function processGestures(hands) {
+            if (!hands || hands.length === 0) return;
+            var w = S.w, h = S.h;
+            var now = performance.now();
+
+            // Track up to 2 hands - determine left/right by X position
+            var fists = [];
+            hands.forEach(function(hand) {
+                var wristX = (1 - hand[0].x) * w;
+                var wristY = hand[0].y * h;
+                var fist = isFist(hand);
+                fists.push({ x: wristX, y: wristY, isFist: fist, hand: hand });
+            });
+
+            // Sort by X to assign left/right
+            fists.sort(function(a, b) { return a.x - b.x; });
+            var left = fists[0];
+            var right = fists.length > 1 ? fists[1] : null;
+
+            // Smooth fist positions
+            if (left) {
+                S.fistSmooth.lx = lerp(S.fistSmooth.lx, left.x, 0.4);
+                S.fistSmooth.ly = lerp(S.fistSmooth.ly, left.y, 0.4);
+                S.leftFist.velX = S.fistSmooth.lx - S.leftFist.x;
+                S.leftFist.velY = S.fistSmooth.ly - S.leftFist.y;
+                S.leftFist.x = S.fistSmooth.lx;
+                S.leftFist.y = S.fistSmooth.ly;
+            }
+            if (right) {
+                S.fistSmooth.rx = lerp(S.fistSmooth.rx, right.x, 0.4);
+                S.fistSmooth.ry = lerp(S.fistSmooth.ry, right.y, 0.4);
+                S.rightFist.velX = S.fistSmooth.rx - S.rightFist.x;
+                S.rightFist.velY = S.fistSmooth.ry - S.rightFist.y;
+                S.rightFist.x = S.fistSmooth.rx;
+                S.rightFist.y = S.fistSmooth.ry;
+            }
+
+            if (!S.playing || S.countdown > 0) return;
+
+            // Detect blocking: both hands above 40% screen height
+            if (left && right && left.y < h * 0.4 && right.y < h * 0.4) {
+                S.playerState = 'blocking';
+                return;
+            }
+
+            // Detect dodge: average hand X far from center
+            if (left && right) {
+                var avgX = (S.leftFist.x + S.rightFist.x) / 2;
+                S.playerDodge = (avgX - w / 2) / (w / 3);
+                if (S.playerDodge < -0.6) S.playerState = 'dodgeL';
+                else if (S.playerDodge > 0.6) S.playerState = 'dodgeR';
+            }
+
+            // Detect punches: rapid upward movement (fist moving up fast)
+            if (left && left.isFist && S.leftFist.velY < -PUNCH_VEL_THRESHOLD && now - punchCooldown[0] > 400) {
+                playerPunch('left');
+                punchCooldown[0] = now;
+            }
+            if (right && right.isFist && S.rightFist.velY < -PUNCH_VEL_THRESHOLD && now - punchCooldown[1] > 400) {
+                playerPunch('right');
+                punchCooldown[1] = now;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // DRAWING
+        // ═══════════════════════════════════════════════════════════
+
+        function drawArena(ctx, w, h) {
+            // Floor gradient
+            var grad = ctx.createLinearGradient(0, h * 0.5, 0, h);
+            grad.addColorStop(0, 'rgba(0,20,40,0)');
+            grad.addColorStop(1, 'rgba(0,30,60,0.3)');
+            ctx.fillStyle = grad; ctx.fillRect(0, h * 0.5, w, h * 0.5);
+
+            // Ring ropes
+            ctx.strokeStyle = 'rgba(255,50,50,0.2)'; ctx.lineWidth = 2;
+            [0.25, 0.35, 0.45].forEach(function(y) {
+                ctx.beginPath(); ctx.moveTo(0, h * y); ctx.lineTo(w, h * y); ctx.stroke();
+            });
+        }
+
+        function drawOpponent(ctx, w, h, time) {
+            var cx = w / 2 + S.oppX;
+            var baseY = h * 0.2 + S.oppY;
+            var scale = 1;
+            var isHurt = S.oppState === 'hurt';
+            var isStunned = S.oppState === 'stunned';
+            var isKO = S.oppState === 'ko';
+            var isWindup = S.oppState === 'windupL' || S.oppState === 'windupR';
+            var isPunching = S.oppState === 'punchL' || S.oppState === 'punchR';
+
+            if (isKO) { baseY += (time - S.oppStateTimer) * 0.1; scale *= 0.9; }
+
+            ctx.save();
+            ctx.translate(cx, baseY);
+            if (isHurt) ctx.translate(Math.sin(time * 0.05) * 5, 0);
+            if (isStunned) ctx.translate(Math.sin(time * 0.02) * 8, 0);
+            ctx.scale(scale, scale);
+
+            // Body
+            ctx.fillStyle = isStunned ? 'rgba(255,255,0,0.3)' : 'rgba(200,50,50,0.3)';
+            ctx.strokeStyle = isStunned ? '#ffaa00' : '#ff3355';
+            ctx.lineWidth = 2;
+            roundRect(ctx, -40, 20, 80, 100, 8); ctx.fill(); ctx.stroke();
+
+            // Head
+            ctx.beginPath();
+            ctx.arc(0, -10, 35, 0, TAU);
+            ctx.fillStyle = isHurt ? 'rgba(255,100,100,0.4)' : 'rgba(200,50,50,0.25)';
+            ctx.fill();
+            ctx.strokeStyle = isHurt ? '#ff8888' : '#ff3355';
+            ctx.lineWidth = 2; ctx.stroke();
+
+            // Eyes
+            if (!isKO) {
+                var eyeOff = isStunned ? Math.sin(time * 0.01) * 3 : 0;
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(-12 + eyeOff, -15, 6, 0, TAU); ctx.fill();
+                ctx.beginPath(); ctx.arc(12 + eyeOff, -15, 6, 0, TAU); ctx.fill();
+                ctx.fillStyle = isStunned ? '#ffaa00' : '#ff0000';
+                ctx.beginPath(); ctx.arc(-12 + eyeOff, -15, 3, 0, TAU); ctx.fill();
+                ctx.beginPath(); ctx.arc(12 + eyeOff, -15, 3, 0, TAU); ctx.fill();
+            } else {
+                ctx.font = '16px ' + F; ctx.fillStyle = '#ff3355'; ctx.textAlign = 'center';
+                ctx.fillText('X  X', 0, -10);
+            }
+
+            // Stun stars
+            if (isStunned) {
+                ctx.font = '14px sans-serif'; ctx.fillStyle = '#ffaa00';
+                for (var i = 0; i < 3; i++) {
+                    var a = time * 0.003 + i * TAU / 3;
+                    ctx.fillText('*', Math.cos(a) * 45, -40 + Math.sin(a) * 15);
+                }
+            }
+
+            // Arms
+            var lArmX = -55, rArmX = 55, armY = 50;
+            if (isWindup) {
+                var side = S.oppState === 'windupL' ? -1 : 1;
+                var pull = Math.sin((time - S.oppStateTimer) * 0.01) * 20;
+                if (side < 0) lArmX -= pull; else rArmX += pull;
+            }
+            if (isPunching) {
+                var side = S.oppState === 'punchL' ? -1 : 1;
+                var ext = 80;
+                if (side < 0) { lArmX -= 10; armY += ext; } else { rArmX += 10; armY += ext; }
+            }
+
+            // Left glove
+            ctx.beginPath(); ctx.arc(lArmX, armY, 18, 0, TAU);
+            ctx.fillStyle = 'rgba(255,50,50,0.4)'; ctx.fill();
+            ctx.strokeStyle = '#ff3355'; ctx.lineWidth = 2; ctx.stroke();
+            // Right glove
+            ctx.beginPath(); ctx.arc(rArmX, armY, 18, 0, TAU);
+            ctx.fill(); ctx.stroke();
+
+            // Warning flash during windup
+            if (isWindup) {
+                var flash = Math.sin(time * 0.02) > 0;
+                if (flash) {
+                    ctx.font = 'bold 18px ' + F;
+                    ctx.fillStyle = '#ff3355';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('!', S.oppState === 'windupL' ? -55 : 55, 30);
+                }
+            }
+
+            ctx.restore();
+        }
+
+        function drawPlayerFists(ctx, w, h, time) {
+            var lx = S.leftFist.x || w * 0.35;
+            var ly = S.leftFist.y || h * 0.75;
+            var rx = S.rightFist.x || w * 0.65;
+            var ry = S.rightFist.y || h * 0.75;
+
+            var blocking = S.playerState === 'blocking';
+            var punchingL = S.playerState === 'punchL';
+            var punchingR = S.playerState === 'punchR';
+
+            // Left fist
+            ctx.save();
+            ctx.beginPath(); ctx.arc(lx, ly, 28, 0, TAU);
+            ctx.fillStyle = punchingL ? 'rgba(0,255,255,0.5)' : 'rgba(0,100,200,0.3)';
+            ctx.shadowColor = punchingL ? '#00ffff' : '#0088ff';
+            ctx.shadowBlur = punchingL ? 30 : 12;
+            ctx.fill();
+            ctx.strokeStyle = blocking ? '#00ff88' : '#00ffff';
+            ctx.lineWidth = punchingL ? 3 : 2;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            // Rotating arcs
+            var t = time * 0.004;
+            ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 1.5;
+            for (var i = 0; i < 3; i++) {
+                ctx.beginPath(); ctx.arc(lx, ly, 34, t + i * TAU / 3, t + i * TAU / 3 + PI / 4); ctx.stroke();
+            }
+            ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.4)'; ctx.textAlign = 'center';
+            ctx.fillText('L', lx, ly + 3);
+            ctx.restore();
+
+            // Right fist
+            ctx.save();
+            ctx.beginPath(); ctx.arc(rx, ry, 28, 0, TAU);
+            ctx.fillStyle = punchingR ? 'rgba(0,255,255,0.5)' : 'rgba(0,100,200,0.3)';
+            ctx.shadowColor = punchingR ? '#00ffff' : '#0088ff';
+            ctx.shadowBlur = punchingR ? 30 : 12;
+            ctx.fill();
+            ctx.strokeStyle = blocking ? '#00ff88' : '#00ffff';
+            ctx.lineWidth = punchingR ? 3 : 2;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 1.5;
+            for (var i = 0; i < 3; i++) {
+                ctx.beginPath(); ctx.arc(rx, ry, 34, -t + i * TAU / 3, -t + i * TAU / 3 + PI / 4); ctx.stroke();
+            }
+            ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.4)'; ctx.textAlign = 'center';
+            ctx.fillText('R', rx, ry + 3);
+            ctx.restore();
+
+            // Block shield
+            if (blocking) {
+                ctx.save();
+                ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 3; ctx.globalAlpha = 0.4;
+                ctx.beginPath(); ctx.arc(w / 2, Math.min(ly, ry) - 20, 80, 0, TAU); ctx.stroke();
+                ctx.font = '10px ' + F; ctx.fillStyle = '#00ff88'; ctx.textAlign = 'center';
+                ctx.globalAlpha = 0.8;
+                ctx.fillText('BLOCKING', w / 2, Math.min(ly, ry) - 60);
+                ctx.restore();
+            }
+        }
+
+        function drawHealthBars(ctx, w) {
+            var barW = 200, barH = 16, y = 20, gap = 30;
+            // Player (left)
+            var px = gap;
+            ctx.fillStyle = 'rgba(0,20,40,0.7)'; roundRect(ctx, px, y, barW, barH, 4); ctx.fill();
+            var pPct = S.playerHP / S.playerMaxHP;
+            ctx.fillStyle = pPct > 0.3 ? '#00ffff' : '#ff3355';
+            ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 8;
+            roundRect(ctx, px, y, barW * pPct, barH, 4); ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.font = '10px ' + F; ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
+            ctx.fillText('YOU', px, y - 6);
+
+            // Opponent (right)
+            var ox = w - gap - barW;
+            ctx.fillStyle = 'rgba(0,20,40,0.7)'; roundRect(ctx, ox, y, barW, barH, 4); ctx.fill();
+            var oPct = S.oppHP / S.oppMaxHP;
+            ctx.fillStyle = oPct > 0.3 ? '#ff3355' : '#ffaa00';
+            ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 8;
+            roundRect(ctx, ox + barW * (1 - oPct), y, barW * oPct, barH, 4); ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.font = '10px ' + F; ctx.fillStyle = '#fff'; ctx.textAlign = 'right';
+            ctx.fillText(S.oppName + ' (Rd ' + S.round + ')', w - gap, y - 6);
+
+            // Score + combo
+            ctx.textAlign = 'center'; ctx.fillStyle = '#ffaa00';
+            ctx.fillText('SCORE: ' + S.score + (S.combo > 1 ? '  COMBO x' + S.combo : ''), w / 2, y + 10);
+        }
+
+        function drawEffects(ctx, time) {
+            for (var i = S.effects.length - 1; i >= 0; i--) {
+                var e = S.effects[i];
+                var age = (time - e.time) / 800;
+                if (age > 1) { S.effects.splice(i, 1); continue; }
+                ctx.save(); ctx.globalAlpha = 1 - age;
+                ctx.font = 'bold 16px ' + F; ctx.textAlign = 'center';
+                if (e.type === 'punch') { ctx.fillStyle = '#00ffff'; }
+                else if (e.type === 'hit') { ctx.fillStyle = '#ff3355'; }
+                else if (e.type === 'block') { ctx.fillStyle = '#00ff88'; }
+                else if (e.type === 'dodge') { ctx.fillStyle = '#ffaa00'; }
+                else if (e.type === 'stun') { ctx.fillStyle = '#ffdd00'; ctx.font = 'bold 22px ' + F; }
+                else { ctx.fillStyle = 'rgba(255,255,255,0.5)'; }
+                ctx.fillText(e.text || e.type.toUpperCase(), e.x, e.y - age * 40);
+                ctx.restore();
+            }
+        }
+
+        function drawCountdown(ctx, w, h, time) {
+            if (S.countdown <= 0) return;
+            var elapsed = (time - S.countdownStart) / 1000;
+            var num = Math.ceil(3 - elapsed);
+            if (num <= 0) return;
+            var scale = 1 + (1 - (elapsed % 1)) * 0.3;
+            ctx.save(); ctx.globalAlpha = 0.5 + (1 - (elapsed % 1)) * 0.5;
+            ctx.font = 'bold ' + Math.floor(60 * scale) + 'px ' + F;
+            ctx.fillStyle = '#ffdd00'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.shadowColor = '#ffdd00'; ctx.shadowBlur = 25;
+            ctx.fillText(num === 3 ? 'ROUND ' + S.round : num === 0 ? 'FIGHT!' : num, w / 2, h / 2);
+            ctx.restore();
+        }
+
+        function drawStartScreen(ctx, w, h, time) {
+            ctx.save();
+            ctx.font = 'bold 36px ' + F; ctx.fillStyle = '#ff3355'; ctx.textAlign = 'center';
+            ctx.shadowColor = '#ff3355'; ctx.shadowBlur = 25;
+            ctx.fillText('SHADOW BOXING', w / 2, h / 2 - 50);
+            ctx.shadowBlur = 0;
+            ctx.font = '14px ' + F; ctx.fillStyle = '#00ffff';
+            var pulse = Math.sin(time / 500) * 0.3 + 0.7; ctx.globalAlpha = pulse;
+            ctx.fillText('Press ENTER to fight', w / 2, h / 2);
+            ctx.globalAlpha = 1;
+            ctx.font = '11px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.fillText('Punch upward with fists | Raise hands to block', w / 2, h / 2 + 28);
+            ctx.fillText('Lean left/right to dodge | 3 rounds to KO', w / 2, h / 2 + 46);
+            ctx.restore();
+        }
+
+        function drawGameOver(ctx, w, h) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(8,8,16,0.7)'; ctx.fillRect(0,0,w,h);
+            ctx.font = 'bold 36px ' + F; ctx.textAlign = 'center';
+            ctx.fillStyle = S.winner === 'player' ? '#00ff88' : '#ff3355';
+            ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 25;
+            ctx.fillText(S.winner === 'player' ? 'KNOCKOUT!' : 'YOU LOST', w / 2, h / 2 - 30);
+            ctx.shadowBlur = 0;
+            ctx.font = '16px ' + F; ctx.fillStyle = '#ffaa00';
+            ctx.fillText('SCORE: ' + S.score + '  MAX COMBO: ' + S.maxCombo, w / 2, h / 2 + 10);
+            ctx.font = '12px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.4)';
+            ctx.fillText('ENTER to fight again', w / 2, h / 2 + 45);
+            ctx.restore();
+        }
+
+        function drawHUD(ctx, w, h) {
+            var s = 20, o = 8;
+            ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(o,o+s); ctx.lineTo(o,o); ctx.lineTo(o+s,o); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w-o-s,o); ctx.lineTo(w-o,o); ctx.lineTo(w-o,o+s); ctx.stroke();
+            ctx.save(); ctx.font = '9px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.fillText('FPS:' + S.fps, 12, h - 8);
+            ctx.textAlign = 'right';
+            ctx.fillText('Fist up fast = punch | Hands high = block | Lean = dodge | Z/X/A/D = keys', w - 12, h - 8);
+            ctx.restore();
+        }
+
+        function drawToast(ctx, w, time) {
+            if (!S.toast || time > S.toast.until) return;
+            var rem = S.toast.until - time;
+            ctx.save(); ctx.globalAlpha = rem < 500 ? rem / 500 : 1;
+            ctx.font = '13px ' + F; ctx.textAlign = 'center';
+            var tw = ctx.measureText(S.toast.text).width + 40;
+            ctx.fillStyle = 'rgba(0,20,40,0.85)';
+            roundRect(ctx, w/2-tw/2, 50, tw, 28, 4); ctx.fill();
+            ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 1; ctx.stroke();
+            ctx.fillStyle = '#00ffff'; ctx.fillText(S.toast.text, w / 2, 69);
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RENDER LOOP
+        // ═══════════════════════════════════════════════════════════
+
+        function renderLoop(ts) {
+            var ctx = S.ctx, w = S.w, h = S.h;
+            S.frameCount++;
+            if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
+
+            // Screen shake
+            ctx.save();
+            if (S.screenShake > 0) {
+                ctx.translate(Math.random() * S.screenShake - S.screenShake / 2, Math.random() * S.screenShake - S.screenShake / 2);
+                S.screenShake *= 0.85;
+                if (S.screenShake < 0.5) S.screenShake = 0;
+            }
+
+            ctx.fillStyle = '#080810'; ctx.fillRect(0, 0, w, h);
+
+            // Camera background
+            var vid = S.usingRemoteCamera ? S.remoteVideo : document.getElementById('video');
+            if (vid && vid.readyState >= 2) {
+                ctx.save(); ctx.globalAlpha = 0.1;
+                ctx.translate(w, 0); ctx.scale(-1, 1);
+                ctx.drawImage(vid, 0, 0, w, h);
+                ctx.restore();
+            }
+
+            drawHUD(ctx, w, h);
+
+            if (S.playing) {
+                updateCountdown(ts);
+                updateOpponent(ts);
+                updatePlayer(ts);
+
+                drawArena(ctx, w, h);
+                drawOpponent(ctx, w, h, ts);
+                drawPlayerFists(ctx, w, h, ts);
+                drawHealthBars(ctx, w);
+                drawEffects(ctx, ts);
+                drawCountdown(ctx, w, h, ts);
+            } else if (S.gameOver) {
+                drawArena(ctx, w, h);
+                drawOpponent(ctx, w, h, ts);
+                drawHealthBars(ctx, w);
+                drawGameOver(ctx, w, h);
+            } else {
+                drawStartScreen(ctx, w, h, ts);
+            }
+
+            drawToast(ctx, w, ts);
+            ctx.restore(); // shake
+            requestAnimationFrame(renderLoop);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INPUT
+        // ═══════════════════════════════════════════════════════════
+
+        function initInput() {
+            window.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { if (!S.playing || S.gameOver) startGame(); return; }
+                if (!S.playing) return;
+                switch (e.key) {
+                    case 'z': case 'Z': playerPunch('left'); break;
+                    case 'x': case 'X': playerPunch('right'); break;
+                    case 'a': case 'A': case 'ArrowLeft': S.playerState = 'dodgeL'; S.playerDodge = -1; break;
+                    case 'd': case 'D': case 'ArrowRight': S.playerState = 'dodgeR'; S.playerDodge = 1; break;
+                    case 'w': case 'W': case 'ArrowUp': S.playerState = 'blocking'; break;
+                }
+            });
+            window.addEventListener('keyup', function(e) {
+                if (['a','A','d','D','w','W','ArrowLeft','ArrowRight','ArrowUp'].indexOf(e.key) >= 0) {
+                    if (S.playerState === 'dodgeL' || S.playerState === 'dodgeR' || S.playerState === 'blocking') {
+                        S.playerState = 'idle'; S.playerDodge = 0;
+                    }
+                }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // MEDIAPIPE
+        // ═══════════════════════════════════════════════════════════
+
+        var mpHands;
+        try {
+            mpHands = new Hands({ locateFile: function(f) { return 'lib/hands/' + f; } });
+            mpHands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.4 });
+            mpHands.onResults(function(results) {
+                S.cameraImage = results.image; S.cameraReady = true;
+                S.handData = results.multiHandLandmarks && results.multiHandLandmarks.length > 0 ? results.multiHandLandmarks : null;
+                if (S.handData) processGestures(S.handData);
+                if (!S.handTrackingReady) { S.handTrackingReady = true; showToast('Hands detected — put up your fists!'); }
+            });
+        } catch(e) { console.warn('MediaPipe failed:', e); }
+
+        // ═══════════════════════════════════════════════════════════
+        // PAIRING
+        // ═══════════════════════════════════════════════════════════
+
+        function generatePairCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
+        function drawQRCode(code) {
+            var url = window.location.origin + window.location.pathname + '?pair=' + code;
+            var qr = qrcode(0, 'M'); qr.addData(url); qr.make();
+            var cv = document.getElementById('qr-canvas'); if (!cv) return;
+            var cx = cv.getContext('2d'), sz = cv.width, mc = qr.getModuleCount(), cs = sz / mc;
+            cx.fillStyle = '#0a0a18'; cx.fillRect(0,0,sz,sz); cx.fillStyle = '#00ffff';
+            for (var r = 0; r < mc; r++) for (var c = 0; c < mc; c++) { if (qr.isDark(r,c)) cx.fillRect(c*cs,r*cs,cs+0.5,cs+0.5); }
+        }
+        function startPairing() {
+            var code = generatePairCode();
+            document.getElementById('pair-code-display').textContent = code;
+            document.getElementById('p-status').textContent = 'Waiting...';
+            document.getElementById('pair-overlay').style.display = 'block';
+            drawQRCode(code);
+            if (S.peer) S.peer.destroy();
+            S.peer = new Peer('jbox-' + code);
+            S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active...'; });
+            S.peer.on('error', function(err) { document.getElementById('p-status').textContent = 'Error: ' + err.type; });
+            S.peer.on('call', function(call) { call.answer(); call.on('stream', function(rs) { onRemoteCam(rs); document.getElementById('pair-overlay').style.display = 'none'; }); call.on('close', function() { offRemoteCam(); }); });
+        }
+        function cancelPairing() { document.getElementById('pair-overlay').style.display = 'none'; if (S.peer) { S.peer.destroy(); S.peer = null; } }
+        function onRemoteCam(stream) {
+            S.remoteVideo = document.createElement('video'); S.remoteVideo.srcObject = stream; S.remoteVideo.autoplay = true; S.remoteVideo.playsInline = true; S.remoteVideo.muted = true; S.remoteVideo.play();
+            if (S.localCamera && S.localCamera.stop) S.localCamera.stop();
+            S.usingRemoteCamera = true;
+            S.remoteVideo.onloadeddata = function() { processRemote(); };
+            showToast('Phone connected!');
+        }
+        var _rs = false;
+        function processRemote() { if (!S.usingRemoteCamera || !S.remoteVideo) return; _rs=!_rs; if(_rs){requestAnimationFrame(processRemote);return;} if(mpHands)mpHands.send({image:S.remoteVideo}).then(function(){if(S.usingRemoteCamera)requestAnimationFrame(processRemote);}); }
+        function offRemoteCam() { S.usingRemoteCamera = false; if(S.remoteVideo){S.remoteVideo.srcObject=null;S.remoteVideo=null;} startLocalCam(); showToast('Phone disconnected'); }
+        function startLocalCam() {
+            var video = document.getElementById('video');
+            if (mpHands) { var _sk=false; S.localCamera = new Camera(video, { onFrame: function(){_sk=!_sk;if(_sk)return Promise.resolve();return mpHands.send({image:video});}, width:320, height:240 }); S.localCamera.start().then(function(){showToast('Camera online');}).catch(function(){showToast('No camera');}); }
+        }
+        function initMobileUI() {
+            document.getElementById('mobile-ui').style.display = 'block'; document.getElementById('c').style.display = 'none';
+            var autoCode = new URLSearchParams(window.location.search).get('pair');
+            if (autoCode && autoCode.length === 6) { document.getElementById('m-choice').style.display='none'; document.getElementById('m-pair-form').style.display='block'; document.getElementById('pair-input').value=autoCode; document.getElementById('m-status').textContent='Auto-connecting...'; setTimeout(function(){connectMobile(autoCode);},800); }
+            document.getElementById('m-play-here').onclick = function(){document.getElementById('mobile-ui').style.display='none';document.getElementById('c').style.display='block';startApp();};
+            document.getElementById('m-pair-btn').onclick = function(){document.getElementById('m-choice').style.display='none';document.getElementById('m-pair-form').style.display='block';};
+            document.getElementById('pair-connect').onclick = function(){var c=document.getElementById('pair-input').value.trim();if(c.length!==6){document.getElementById('m-status').textContent='Enter 6 digits';return;}connectMobile(c);};
+            document.getElementById('pair-input').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('pair-connect').click();});
+        }
+        function connectMobile(code) {
+            var st=document.getElementById('m-status'),pv=document.getElementById('mobile-preview'); st.textContent='Connecting...';
+            var peer=new Peer(); peer.on('open',function(){navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false}).then(function(stream){pv.srcObject=stream;pv.style.display='block';var call=peer.call('jbox-'+code,stream);if(!call){st.textContent='Failed';return;}st.textContent='Streaming...';st.style.color='#00ff88';var btn=document.getElementById('pair-connect');btn.textContent='DISCONNECT';btn.style.color='#ff5555';btn.onclick=function(){call.close();stream.getTracks().forEach(function(t){t.stop();});pv.srcObject=null;pv.style.display='none';st.textContent='Disconnected';st.style.color='';btn.textContent='CONNECT';btn.style.color='';btn.onclick=function(){var c=document.getElementById('pair-input').value.trim();if(c.length===6)connectMobile(c);};peer.destroy();};}).catch(function(err){st.textContent='Camera: '+err.message;});});
+            peer.on('error',function(err){st.textContent='Failed: '+err.type;});
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════════════
+
+        function startApp() {
+            S.canvas = document.getElementById('c'); S.ctx = S.canvas.getContext('2d');
+            function resize() { S.w = window.innerWidth; S.h = window.innerHeight; S.canvas.width = S.w; S.canvas.height = S.h; S.leftFist.x = S.w*0.35; S.leftFist.y = S.h*0.75; S.rightFist.x = S.w*0.65; S.rightFist.y = S.h*0.75; S.fistSmooth.lx=S.leftFist.x; S.fistSmooth.ly=S.leftFist.y; S.fistSmooth.rx=S.rightFist.x; S.fistSmooth.ry=S.rightFist.y; }
+            window.addEventListener('resize', resize); resize();
+            initInput();
+            document.getElementById('cam-choice').style.display = 'block';
+            document.getElementById('cc-local').onclick = function(){document.getElementById('cam-choice').style.display='none';startLocalCam();};
+            document.getElementById('cc-phone').onclick = function(){document.getElementById('cam-choice').style.display='none';startPairing();};
+            document.getElementById('cc-skip').onclick = function(){document.getElementById('cam-choice').style.display='none';showToast('Z=left X=right A/D=dodge W=block');};
+            document.getElementById('pair-cancel').onclick = cancelPairing;
+            S.lastFpsTime = performance.now(); requestAnimationFrame(renderLoop);
+        }
+
+        function init() {
+            var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+            if (isMobile) { initMobileUI(); return; }
+            startApp();
+        }
+        init();
+    })();
+    </script>
+</body>
+</html>
