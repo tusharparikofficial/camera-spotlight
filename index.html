@@ -93,13 +93,20 @@
     <!-- Mobile UI -->
     <div id="mobile-ui">
         <div class="m-card">
-            <div class="m-title">J.A.R.V.I.S. &nbsp; R E M O T E</div>
-            <video id="mobile-preview" autoplay playsinline muted></video>
-            <div style="margin:16px 0;">
-                <input class="m-input" id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code">
+            <div class="m-title">J.A.R.V.I.S. &nbsp; H O L O F O R G E</div>
+            <div id="m-choice">
+                <div style="font-size:12px;opacity:0.5;margin-bottom:18px;">Choose how to use</div>
+                <button class="holo-btn" id="m-play-here" style="display:block;width:100%;margin:10px 0;padding:18px;font-size:14px;">USE ON THIS DEVICE</button>
+                <button class="holo-btn" id="m-pair-btn" style="display:block;width:100%;margin:10px 0;padding:18px;font-size:14px;">PAIR WITH DESKTOP</button>
             </div>
-            <button class="holo-btn" id="pair-connect">C O N N E C T</button>
-            <div class="m-status" id="m-status">Enter the 6-digit code from your desktop</div>
+            <div id="m-pair-form" style="display:none;">
+                <video id="mobile-preview" autoplay playsinline muted></video>
+                <div style="margin:16px 0;">
+                    <input class="m-input" id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code">
+                </div>
+                <button class="holo-btn" id="pair-connect">C O N N E C T</button>
+                <div class="m-status" id="m-status">Enter the 6-digit code from your desktop</div>
+            </div>
         </div>
     </div>
 
@@ -2133,6 +2140,31 @@
             document.getElementById('mobile-ui').style.display = 'block';
             document.getElementById('canvas').style.display = 'none';
 
+            // Check for ?pair= auto-connect
+            var autoCode = new URLSearchParams(window.location.search).get('pair');
+            if (autoCode && autoCode.length === 6) {
+                document.getElementById('m-choice').style.display = 'none';
+                document.getElementById('m-pair-form').style.display = 'block';
+                document.getElementById('pair-input').value = autoCode;
+                document.getElementById('m-status').textContent = 'Auto-connecting...';
+                setTimeout(function() { connectToDesktop(autoCode); }, 800);
+                return;
+            }
+
+            // "Play Here" → hide mobile-ui, show canvas, start app
+            document.getElementById('m-play-here').onclick = function() {
+                document.getElementById('mobile-ui').style.display = 'none';
+                document.getElementById('canvas').style.display = 'block';
+                startApp();
+            };
+
+            // "Pair with Desktop" → hide choice, show pair form
+            document.getElementById('m-pair-btn').onclick = function() {
+                document.getElementById('m-choice').style.display = 'none';
+                document.getElementById('m-pair-form').style.display = 'block';
+            };
+
+            // Connect button handler
             document.getElementById('pair-connect').onclick = function() {
                 var code = document.getElementById('pair-input').value.trim();
                 if (code.length !== 6) {
@@ -2142,16 +2174,10 @@
                 connectToDesktop(code);
             };
 
+            // Enter key handler
             document.getElementById('pair-input').addEventListener('keydown', function(e) {
                 if (e.key === 'Enter') document.getElementById('pair-connect').click();
             });
-
-            var autoCode = new URLSearchParams(window.location.search).get('pair');
-            if (autoCode && autoCode.length === 6) {
-                document.getElementById('pair-input').value = autoCode;
-                document.getElementById('m-status').textContent = 'Auto-connecting...';
-                setTimeout(function() { connectToDesktop(autoCode); }, 800);
-            }
         }
 
         function connectToDesktop(code) {
@@ -2277,14 +2303,7 @@
         // INIT
         // ═══════════════════════════════════════════════════════════
 
-        function init() {
-            // Mobile detection → show mobile pairing UI
-            if (S.isMobile) {
-                initMobileUI();
-                return;
-            }
-
-            // Desktop init
+        function startApp() {
             S.canvas = document.getElementById('canvas');
             S.ctx = S.canvas.getContext('2d');
 
@@ -2315,6 +2334,14 @@
             S.bootStart = performance.now();
             S.lastFpsTime = S.bootStart;
             requestAnimationFrame(renderLoop);
+        }
+
+        function init() {
+            if (S.isMobile) {
+                initMobileUI();
+                return;
+            }
+            startApp();
         }
 
         init();

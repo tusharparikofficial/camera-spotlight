@@ -63,11 +63,18 @@
     </div>
     <div id="mobile-ui">
         <div class="m-card">
-            <div class="m-title">J.A.R.V.I.S. &nbsp; D R U M S &nbsp; R E M O T E</div>
-            <video id="mobile-preview" autoplay playsinline muted></video>
-            <div style="margin:16px 0;"><input class="m-input" id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code"></div>
-            <button class="holo-btn" id="pair-connect">C O N N E C T</button>
-            <div class="m-status" id="m-status">Enter 6-digit code from desktop</div>
+            <div class="m-title">J.A.R.V.I.S. &nbsp; D R U M S</div>
+            <div id="m-choice">
+                <div style="font-size:11px;opacity:0.5;margin-bottom:20px;">Choose how to play</div>
+                <button class="holo-btn" id="m-play-here" style="display:block;width:100%;margin:10px 0;padding:18px;font-size:14px;">PLAY ON THIS DEVICE</button>
+                <button class="holo-btn" id="m-pair-btn" style="display:block;width:100%;margin:10px 0;padding:18px;font-size:14px;">PAIR WITH DESKTOP</button>
+            </div>
+            <div id="m-pair-form" style="display:none;">
+                <video id="mobile-preview" autoplay playsinline muted></video>
+                <div style="margin:16px 0;"><input class="m-input" id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code"></div>
+                <button class="holo-btn" id="pair-connect">C O N N E C T</button>
+                <div class="m-status" id="m-status">Enter 6-digit code from desktop</div>
+            </div>
         </div>
     </div>
 
@@ -751,19 +758,36 @@
         function initMobileUI() {
             document.getElementById('mobile-ui').style.display = 'block';
             document.getElementById('c').style.display = 'none';
+
+            // Auto-connect if ?pair= in URL (from QR scan) → go straight to pair form
+            var autoCode = new URLSearchParams(window.location.search).get('pair');
+            if (autoCode && autoCode.length === 6) {
+                document.getElementById('m-choice').style.display = 'none';
+                document.getElementById('m-pair-form').style.display = 'block';
+                document.getElementById('pair-input').value = autoCode;
+                document.getElementById('m-status').textContent = 'Auto-connecting...';
+                setTimeout(function() { connectMobile(autoCode); }, 800);
+            }
+
+            // "Play Here" → hide mobile UI, run full app locally
+            document.getElementById('m-play-here').onclick = function() {
+                document.getElementById('mobile-ui').style.display = 'none';
+                document.getElementById('c').style.display = 'block';
+                startApp();
+            };
+
+            // "Pair" → show pairing form
+            document.getElementById('m-pair-btn').onclick = function() {
+                document.getElementById('m-choice').style.display = 'none';
+                document.getElementById('m-pair-form').style.display = 'block';
+            };
+
             document.getElementById('pair-connect').onclick = function() {
                 var code = document.getElementById('pair-input').value.trim();
                 if (code.length !== 6) { document.getElementById('m-status').textContent = 'Enter 6 digits'; return; }
                 connectMobile(code);
             };
             document.getElementById('pair-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('pair-connect').click(); });
-            // Auto-connect if ?pair= in URL (from QR scan)
-            var autoCode = new URLSearchParams(window.location.search).get('pair');
-            if (autoCode && autoCode.length === 6) {
-                document.getElementById('pair-input').value = autoCode;
-                document.getElementById('m-status').textContent = 'Auto-connecting...';
-                setTimeout(function() { connectMobile(autoCode); }, 800);
-            }
         }
         function connectMobile(code) {
             var st = document.getElementById('m-status'), pv = document.getElementById('mobile-preview');
@@ -788,9 +812,7 @@
         // INIT
         // ═══════════════════════════════════════════════════════════
 
-        function init() {
-            if (S.isMobile) { initMobileUI(); return; }
-
+        function startApp() {
             S.canvas = document.getElementById('c');
             S.ctx = S.canvas.getContext('2d');
 
@@ -812,6 +834,11 @@
 
             S.lastFpsTime = performance.now();
             requestAnimationFrame(renderLoop);
+        }
+
+        function init() {
+            if (S.isMobile) { initMobileUI(); return; }
+            startApp();
         }
 
         init();
