@@ -429,13 +429,15 @@
             var chin = face[152];
             var faceCenterY = (forehead.y + chin.y) / 2;
 
-            var rawHX = -(nose.x - faceCenterX) * 8; // negative because mirrored
-            var rawHY = (nose.y - faceCenterY) * 8;
+            var rawHX = -(nose.x - faceCenterX) * 10; // negative because mirrored
+            // Up/down: use nose Y relative to midpoint between forehead and chin
+            // Tilting head down moves nose below center, up moves it above
+            var rawHY = (nose.y - faceCenterY) * 14; // higher multiplier - vertical tilt is subtler
 
             // Smooth everything
             S.faceSmooth.mx = lerp(S.faceSmooth.mx, rawMouth, 0.3);
-            S.faceSmooth.hx = lerp(S.faceSmooth.hx, rawHX, 0.25);
-            S.faceSmooth.hy = lerp(S.faceSmooth.hy, rawHY, 0.25);
+            S.faceSmooth.hx = lerp(S.faceSmooth.hx, rawHX, 0.3);
+            S.faceSmooth.hy = lerp(S.faceSmooth.hy, rawHY, 0.3);
 
             S.mouthOpenness = S.faceSmooth.mx;
             S.headDirX = S.faceSmooth.hx;
@@ -445,13 +447,15 @@
             S.pMouthTarget = S.mouthOpenness;
 
             // Map head direction to Pac-Man direction
+            // Use separate thresholds: horizontal turn is easier than vertical tilt
             if (S.playing && !S.paused) {
-                var threshold = 0.35;
+                var threshX = 0.3;
+                var threshY = 0.2; // lower threshold for up/down since it's harder
                 var ax = Math.abs(S.headDirX);
                 var ay = Math.abs(S.headDirY);
-                if (ax > ay && ax > threshold) {
+                if (ax > threshX && ax > ay * 1.2) {
                     S.pNextDir = S.headDirX > 0 ? 0 : 2; // right or left
-                } else if (ay > ax && ay > threshold) {
+                } else if (ay > threshY && ay > ax * 0.8) {
                     S.pNextDir = S.headDirY > 0 ? 1 : 3; // down or up
                 }
             }
