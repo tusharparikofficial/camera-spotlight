@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JARVIS | Air Piano</title>
     <style>
@@ -636,8 +637,7 @@
                 ctx.globalAlpha = alpha;
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                ctx.arc(rip.x, rip.y, r, 0, TAU);
-                ctx.stroke();
+                if (r > 0) { ctx.arc(rip.x, rip.y, r, 0, TAU); ctx.stroke(); }
                 ctx.restore();
             }
         }

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JARVIS | Drum Kit</title>
     <style>
@@ -478,7 +479,8 @@
                 ctx.globalAlpha = (1 - age) * 0.4;
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                ctx.arc(rip.x, rip.y, rip.maxR * age, 0, TAU);
+                var rr = rip.maxR * age; if (rr <= 0) rr = 0.1;
+                ctx.arc(rip.x, rip.y, rr, 0, TAU);
                 ctx.stroke();
                 ctx.restore();
             }
