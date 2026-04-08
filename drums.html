@@ -94,11 +94,18 @@
         // AUDIO ENGINE
         // ═══════════════════════════════════════════════════════════
 
-        var audioCtx = null;
+        var audioCtx = null, audioReady = false;
         function ensureAudio() {
-            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (audioCtx.state === 'suspended') audioCtx.resume();
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (!audioReady && audioCtx.state === 'suspended') {
+                audioCtx.resume().then(function() { audioReady = true; });
+            }
         }
+        // Pre-init audio on any user interaction to avoid blocking later
+        document.addEventListener('click', ensureAudio, { once: true });
+        document.addEventListener('keydown', ensureAudio, { once: true });
 
         function playKick() {
             ensureAudio(); var now = audioCtx.currentTime;
