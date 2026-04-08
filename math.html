@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS | Maths Lab — Quadratic Equations</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #080810; }
+        body { font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
+        #video { display: none; }
+        #c { display: block; width: 100vw; height: 100vh; }
+
+        /* Mode selection */
+        #mode-select { display: none; position: fixed; inset: 0; z-index: 100; background: rgba(8,8,16,0.98); }
+        .ms-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; max-width: 700px; width: 90%; }
+        .ms-title { font-size: 20px; letter-spacing: 6px; margin-bottom: 8px; text-shadow: 0 0 30px rgba(0,255,255,0.4); }
+        .ms-sub { font-size: 11px; opacity: 0.4; letter-spacing: 3px; margin-bottom: 30px; }
+        .ms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+        .ms-btn { background: rgba(0,20,40,0.7); border: 1px solid rgba(0,255,255,0.2); color: #00ffff; padding: 20px 16px; font-family: inherit; font-size: 12px; cursor: pointer; border-radius: 10px; transition: all 0.3s; text-align: center; }
+        .ms-btn:hover { border-color: #00ffff; background: rgba(0,40,80,0.6); box-shadow: 0 0 25px rgba(0,255,255,0.15); transform: translateY(-2px); }
+        .ms-btn .num { font-size: 28px; display: block; margin-bottom: 8px; }
+        .ms-btn .label { font-size: 10px; opacity: 0.5; margin-top: 4px; display: block; }
+
+        /* Answer input overlay */
+        #answer-overlay { display: none; position: fixed; inset: 0; z-index: 90; background: rgba(8,8,16,0.9); }
+        .ao-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 30px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.8); backdrop-filter: blur(20px); min-width: 350px; }
+        .ao-input { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 12px 16px; font-family: inherit; font-size: 20px; text-align: center; border-radius: 6px; width: 260px; outline: none; margin: 16px 0; }
+        .ao-input:focus { border-color: #00ffff; box-shadow: 0 0 15px rgba(0,255,255,0.2); }
+        .ao-btn { background: transparent; border: 1px solid rgba(0,255,255,0.4); color: #00ffff; padding: 10px 24px; font-family: inherit; font-size: 13px; cursor: pointer; border-radius: 4px; letter-spacing: 2px; margin: 4px; }
+        .ao-btn:hover { background: rgba(0,255,255,0.1); }
+        .ao-btn.correct { border-color: #00ff88; color: #00ff88; }
+        .ao-btn.wrong { border-color: #ff3355; color: #ff3355; }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="c"></canvas>
+
+    <!-- Mode Selection -->
+    <div id="mode-select">
+        <div class="ms-card">
+            <div class="ms-title">MATHS LAB</div>
+            <div class="ms-sub">QUADRATIC EQUATIONS — CLASS X ICSE</div>
+            <div class="ms-grid">
+                <button class="ms-btn" data-mode="learn"><span class="num">&#x1F4D6;</span>LEARN<span class="label">Step-by-step concepts</span></button>
+                <button class="ms-btn" data-mode="solve"><span class="num">&#x1F9EE;</span>SOLVER<span class="label">Enter any equation</span></button>
+                <button class="ms-btn" data-mode="practice"><span class="num">&#x270F;</span>PRACTICE<span class="label">Random problems</span></button>
+                <button class="ms-btn" data-mode="graph"><span class="num">&#x1F4C8;</span>GRAPH LAB<span class="label">Visualize with hands</span></button>
+                <button class="ms-btn" data-mode="nature"><span class="num">&#x1F50D;</span>NATURE OF ROOTS<span class="label">Discriminant explorer</span></button>
+                <button class="ms-btn" data-mode="word"><span class="num">&#x1F4DD;</span>WORD PROBLEMS<span class="label">Real-life applications</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Answer overlay -->
+    <div id="answer-overlay">
+        <div class="ao-card">
+            <div id="ao-question" style="font-size:14px;margin-bottom:12px;"></div>
+            <input class="ao-input" id="ao-input" type="text" placeholder="Your answer">
+            <div style="margin-top:8px;">
+                <button class="ao-btn" id="ao-submit">CHECK</button>
+                <button class="ao-btn" id="ao-hint">HINT</button>
+                <button class="ao-btn" id="ao-skip">SKIP</button>
+            </div>
+            <div id="ao-feedback" style="margin-top:12px;font-size:12px;min-height:20px;"></div>
+        </div>
+    </div>
+
+    <script src="lib/hands/hands.js"></script>
+    <script src="lib/camera_utils/camera_utils.js"></script>
+
+    <script>
+    (function() {
+        'use strict';
+        var F = "'Courier New',Consolas,monospace";
+        var PI = Math.PI, TAU = PI * 2;
+
+        // ═══════════════════════════════════════════════════════════
+        // STATE
+        // ═══════════════════════════════════════════════════════════
+
+        var S = {
+            canvas: null, ctx: null, w: 0, h: 0,
+            mode: null, // 'learn','solve','practice','graph','nature','word'
+            // Graph lab
+            graphA: 1, graphB: 0, graphC: 0,
+            targetA: 1, targetB: 0, targetC: 0,
+            graphScale: 40, graphOffX: 0, graphOffY: 0,
+            // Learn mode
+            learnSlide: 0,
+            // Practice
+            practiceQ: null, practiceScore: 0, practiceTotal: 0, practiceStreak: 0,
+            // Nature of roots
+            natureA: 1, natureB: 0, natureC: 0,
+            // Word problems
+            wordIdx: 0,
+            // Hand
+            handCursor: null, handData: null,
+            cameraReady: false, localCamera: null,
+            // FPS
+            fps: 0, frameCount: 0, lastFpsTime: 0,
+            toast: null,
+        };
+
+        function showToast(t) { S.toast = { text: t, until: performance.now() + 2500 }; }
+        function lerp(a,b,t) { return a+(b-a)*t; }
+
+        // ═══════════════════════════════════════════════════════════
+        // QUADRATIC MATH ENGINE
+        // ═══════════════════════════════════════════════════════════
+
+        function solveQuadratic(a, b, c) {
+            var disc = b * b - 4 * a * c;
+            var result = { a:a, b:b, c:c, disc: disc, nature: '', roots: [], steps: [] };
+
+            result.steps.push('Given: ' + formatEq(a, b, c));
+            result.steps.push('a = ' + a + ', b = ' + b + ', c = ' + c);
+            result.steps.push('Discriminant (D) = b\u00B2 - 4ac');
+            result.steps.push('D = (' + b + ')\u00B2 - 4(' + a + ')(' + c + ')');
+            result.steps.push('D = ' + (b*b) + ' - ' + (4*a*c));
+            result.steps.push('D = ' + disc);
+
+            if (disc > 0) {
+                result.nature = 'Real & Distinct';
+                var r1 = (-b + Math.sqrt(disc)) / (2 * a);
+                var r2 = (-b - Math.sqrt(disc)) / (2 * a);
+                result.roots = [r1, r2];
+                result.steps.push('');
+                result.steps.push('D > 0 \u2192 Two real and distinct roots');
+                result.steps.push('x = (-b \u00B1 \u221AD) / 2a');
+                result.steps.push('x = (' + (-b) + ' \u00B1 \u221A' + disc + ') / ' + (2*a));
+                result.steps.push('');
+                result.steps.push('x\u2081 = ' + round(r1, 3));
+                result.steps.push('x\u2082 = ' + round(r2, 3));
+            } else if (disc === 0) {
+                result.nature = 'Real & Equal';
+                var r = -b / (2 * a);
+                result.roots = [r, r];
+                result.steps.push('');
+                result.steps.push('D = 0 \u2192 Two real and equal roots');
+                result.steps.push('x = -b / 2a = ' + round(r, 3));
+            } else {
+                result.nature = 'Complex / Imaginary';
+                result.roots = [];
+                result.steps.push('');
+                result.steps.push('D < 0 \u2192 No real roots (complex roots)');
+                var real = -b / (2 * a);
+                var imag = Math.sqrt(-disc) / (2 * a);
+                result.steps.push('x = ' + round(real,3) + ' \u00B1 ' + round(imag,3) + 'i');
+            }
+
+            result.steps.push('');
+            result.steps.push('Sum of roots = -b/a = ' + round(-b/a, 3));
+            result.steps.push('Product of roots = c/a = ' + round(c/a, 3));
+
+            return result;
+        }
+
+        function formatEq(a, b, c) {
+            var s = '';
+            if (a === 1) s += 'x\u00B2';
+            else if (a === -1) s += '-x\u00B2';
+            else s += a + 'x\u00B2';
+            if (b > 0) s += ' + ' + (b === 1 ? '' : b) + 'x';
+            else if (b < 0) s += ' - ' + (b === -1 ? '' : Math.abs(b)) + 'x';
+            if (c > 0) s += ' + ' + c;
+            else if (c < 0) s += ' - ' + Math.abs(c);
+            return s + ' = 0';
+        }
+
+        function round(n, d) { var f = Math.pow(10, d); return Math.round(n * f) / f; }
+
+        // ═══════════════════════════════════════════════════════════
+        // PROBLEM GENERATORS
+        // ═══════════════════════════════════════════════════════════
+
+        function generatePractice() {
+            var types = ['factorize', 'formula', 'discriminant', 'form_eq', 'sum_product'];
+            var type = types[Math.floor(Math.random() * types.length)];
+            var q = {};
+
+            switch (type) {
+                case 'factorize': {
+                    // Generate from roots
+                    var r1 = Math.floor(Math.random() * 11) - 5;
+                    var r2 = Math.floor(Math.random() * 11) - 5;
+                    var a = 1, b = -(r1 + r2), c = r1 * r2;
+                    q.question = 'Solve by factorization:\n' + formatEq(a, b, c);
+                    q.answer = [Math.min(r1,r2), Math.max(r1,r2)].join(', ');
+                    q.hint = 'Find two numbers that multiply to ' + c + ' and add to ' + b;
+                    q.solution = solveQuadratic(a, b, c);
+                    break;
+                }
+                case 'formula': {
+                    var a = [1, 2, 3][Math.floor(Math.random() * 3)];
+                    var r1 = Math.floor(Math.random() * 7) - 3;
+                    var r2 = Math.floor(Math.random() * 7) - 3;
+                    var b = -a * (r1 + r2), c = a * r1 * r2;
+                    q.question = 'Find the roots using the quadratic formula:\n' + formatEq(a, b, c);
+                    var roots = [Math.min(r1,r2), Math.max(r1,r2)];
+                    q.answer = roots.join(', ');
+                    q.hint = 'Use x = (-b \u00B1 \u221A(b\u00B2-4ac)) / 2a';
+                    q.solution = solveQuadratic(a, b, c);
+                    break;
+                }
+                case 'discriminant': {
+                    var a = Math.floor(Math.random() * 4) + 1;
+                    var b = Math.floor(Math.random() * 13) - 6;
+                    var c = Math.floor(Math.random() * 13) - 6;
+                    var d = b*b - 4*a*c;
+                    q.question = 'Find the discriminant of:\n' + formatEq(a, b, c);
+                    q.answer = String(d);
+                    q.hint = 'D = b\u00B2 - 4ac = (' + b + ')\u00B2 - 4(' + a + ')(' + c + ')';
+                    q.solution = solveQuadratic(a, b, c);
+                    break;
+                }
+                case 'form_eq': {
+                    var r1 = Math.floor(Math.random() * 9) - 4;
+                    var r2 = Math.floor(Math.random() * 9) - 4;
+                    q.question = 'Form a quadratic equation with roots ' + r1 + ' and ' + r2;
+                    var b = -(r1 + r2), c = r1 * r2;
+                    q.answer = formatEq(1, b, c);
+                    q.hint = 'x\u00B2 - (sum)x + (product) = 0';
+                    q.solution = solveQuadratic(1, b, c);
+                    break;
+                }
+                case 'sum_product': {
+                    var r1 = Math.floor(Math.random() * 9) - 4;
+                    var r2 = Math.floor(Math.random() * 9) - 4;
+                    var a = 1, b = -(r1+r2), c = r1*r2;
+                    q.question = 'For ' + formatEq(a,b,c) + '\nFind: Sum and Product of roots';
+                    q.answer = (r1+r2) + ', ' + (r1*r2);
+                    q.hint = 'Sum = -b/a, Product = c/a';
+                    q.solution = solveQuadratic(a, b, c);
+                    break;
+                }
+            }
+            q.type = type;
+            return q;
+        }
+
+        var WORD_PROBLEMS = [
+            { q: 'The product of two consecutive positive integers is 306. Find the integers.',
+              setup: 'Let the integers be x and x+1\nx(x+1) = 306\nx\u00B2 + x - 306 = 0',
+              eq: [1, 1, -306], ans: '17, 18' },
+            { q: 'A rectangular garden has area 180 m\u00B2. Its length is 3m more than its width. Find the dimensions.',
+              setup: 'Let width = x, length = x+3\nx(x+3) = 180\nx\u00B2 + 3x - 180 = 0',
+              eq: [1, 3, -180], ans: '12, 15' },
+            { q: 'A train travels 300 km at uniform speed. If the speed had been 5 km/h more, it would have taken 2 hours less. Find the speed.',
+              setup: 'Let speed = x km/h\n300/x - 300/(x+5) = 2\n300(x+5) - 300x = 2x(x+5)\n2x\u00B2 + 10x - 1500 = 0\nx\u00B2 + 5x - 750 = 0',
+              eq: [1, 5, -750], ans: '25' },
+            { q: 'The sum of the squares of two consecutive odd numbers is 394. Find the numbers.',
+              setup: 'Let the numbers be x and x+2\nx\u00B2 + (x+2)\u00B2 = 394\n2x\u00B2 + 4x + 4 = 394\nx\u00B2 + 2x - 195 = 0',
+              eq: [1, 2, -195], ans: '13, 15' },
+            { q: 'The hypotenuse of a right triangle is 13 cm. If one side is 7 cm more than the other, find the sides.',
+              setup: 'Let shorter side = x\nOther side = x+7\nx\u00B2 + (x+7)\u00B2 = 169\n2x\u00B2 + 14x + 49 = 169\nx\u00B2 + 7x - 60 = 0',
+              eq: [1, 7, -60], ans: '5, 12' },
+            { q: 'A shopkeeper buys items for Rs 1200. He keeps one and sells the rest for Rs 80 each, making a profit of Rs 160 on each. Find how many items he bought.',
+              setup: 'Let items bought = n\nCost per item = 1200/n\nSP = 1200/n + 160 = 80\nn items sold = (n-1)\n(n-1) \u00D7 80 = 1200 + 160(n-1) ... leads to\nn\u00B2 - n - 90 = 0',
+              eq: [1, -1, -90], ans: '10' },
+        ];
+
+        // ═══════════════════════════════════════════════════════════
+        // LEARN MODE SLIDES
+        // ═══════════════════════════════════════════════════════════
+
+        var LEARN_SLIDES = [
+            { title: 'What is a Quadratic Equation?', content: [
+                'A polynomial equation of degree 2',
+                '',
+                'Standard Form:  ax\u00B2 + bx + c = 0',
+                '',
+                'where a \u2260 0, a, b, c are real numbers',
+                '',
+                'Examples:',
+                '  x\u00B2 + 5x + 6 = 0',
+                '  2x\u00B2 - 3x + 1 = 0',
+                '  x\u00B2 - 16 = 0',
+            ]},
+            { title: 'The Quadratic Formula', content: [
+                'For ax\u00B2 + bx + c = 0:',
+                '',
+                '        -b \u00B1 \u221A(b\u00B2 - 4ac)',
+                '  x = \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+                '              2a',
+                '',
+                'This formula ALWAYS works!',
+                'It gives both roots of any quadratic.',
+            ]},
+            { title: 'The Discriminant', content: [
+                'D = b\u00B2 - 4ac  (the part under the \u221A)',
+                '',
+                'D > 0 \u2192 Two distinct real roots',
+                '         The parabola crosses x-axis twice',
+                '',
+                'D = 0 \u2192 Two equal real roots',
+                '         The parabola touches x-axis once',
+                '',
+                'D < 0 \u2192 No real roots (complex)',
+                '         The parabola doesn\'t touch x-axis',
+            ]},
+            { title: 'Solving by Factorization', content: [
+                'Example: x\u00B2 + 5x + 6 = 0',
+                '',
+                'Step 1: Find two numbers that',
+                '  multiply to 6 and add to 5',
+                '  \u2192 2 and 3  (2\u00D73=6, 2+3=5)',
+                '',
+                'Step 2: Factor',
+                '  (x + 2)(x + 3) = 0',
+                '',
+                'Step 3: Set each factor = 0',
+                '  x = -2  or  x = -3',
+            ]},
+            { title: 'Sum & Product of Roots', content: [
+                'For ax\u00B2 + bx + c = 0 with roots \u03B1, \u03B2:',
+                '',
+                'Sum of roots:    \u03B1 + \u03B2 = -b/a',
+                'Product of roots: \u03B1\u03B2 = c/a',
+                '',
+                'Example: x\u00B2 - 7x + 12 = 0',
+                '  Sum = -(-7)/1 = 7',
+                '  Product = 12/1 = 12',
+                '  Roots: 3 and 4  \u2713',
+                '    (3+4=7, 3\u00D74=12)',
+            ]},
+            { title: 'Forming Equations from Roots', content: [
+                'Given roots \u03B1 and \u03B2:',
+                '',
+                'x\u00B2 - (\u03B1+\u03B2)x + (\u03B1\u03B2) = 0',
+                '',
+                'Example: Form equation with roots 3, -5',
+                '  Sum = 3 + (-5) = -2',
+                '  Product = 3 \u00D7 (-5) = -15',
+                '  Equation: x\u00B2 + 2x - 15 = 0',
+                '',
+                'Verify: (x-3)(x+5) = x\u00B2 + 2x - 15 \u2713',
+            ]},
+        ];
+
+        // ═══════════════════════════════════════════════════════════
+        // DRAWING
+        // ═══════════════════════════════════════════════════════════
+
+        function drawHUD(ctx, w, h, time) {
+            // Background grid
+            ctx.strokeStyle = 'rgba(0,255,255,0.025)'; ctx.lineWidth = 1;
+            for (var x = 60; x < w; x += 60) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+            for (var y = 60; y < h; y += 60) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+            // Corners
+            var s=20,o=8; ctx.strokeStyle='rgba(0,255,255,0.2)'; ctx.lineWidth=2;
+            ctx.beginPath();ctx.moveTo(o,o+s);ctx.lineTo(o,o);ctx.lineTo(o+s,o);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(w-o-s,o);ctx.lineTo(w-o,o);ctx.lineTo(w-o,o+s);ctx.stroke();
+            // Title
+            ctx.save(); ctx.font='11px '+F; ctx.fillStyle='#00ffff'; ctx.globalAlpha=0.5; ctx.textAlign='center';
+            ctx.fillText('J.A.R.V.I.S.  MATHS LAB — QUADRATIC EQUATIONS', w/2, 20);
+            ctx.restore();
+            // Back button
+            ctx.save(); ctx.font='10px '+F; ctx.fillStyle='rgba(0,255,255,0.4)'; ctx.textAlign='left';
+            ctx.fillText('[ESC] Menu', 14, h - 12);
+            ctx.textAlign='right'; ctx.fillText('FPS: '+S.fps, w-14, h-12);
+            ctx.restore();
+            // Scan line
+            var sy = ((time % 6000) / 6000) * h;
+            ctx.save();
+            var grad = ctx.createLinearGradient(0,sy-20,0,sy+20);
+            grad.addColorStop(0,'transparent'); grad.addColorStop(0.5,'rgba(0,255,255,0.025)'); grad.addColorStop(1,'transparent');
+            ctx.fillStyle = grad; ctx.fillRect(0,sy-20,w,40);
+            ctx.restore();
+        }
+
+        // ── Graph Lab ──
+        function drawGraphLab(ctx, w, h, time) {
+            // Smooth coefficients
+            S.graphA = lerp(S.graphA, S.targetA, 0.08);
+            S.graphB = lerp(S.graphB, S.targetB, 0.08);
+            S.graphC = lerp(S.graphC, S.targetC, 0.08);
+            var a = S.graphA, b = S.graphB, c = S.graphC;
+            var sc = S.graphScale;
+            var cx = w / 2 + S.graphOffX, cy = h / 2 + S.graphOffY;
+
+            // Axes
+            ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(w, cy); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke();
+
+            // Grid numbers
+            ctx.font = '9px '+F; ctx.fillStyle = 'rgba(0,255,255,0.3)'; ctx.textAlign = 'center';
+            for (var i = -10; i <= 10; i++) {
+                if (i === 0) continue;
+                var gx = cx + i * sc;
+                if (gx > 20 && gx < w - 20) {
+                    ctx.fillText(i, gx, cy + 14);
+                    ctx.strokeStyle = 'rgba(0,255,255,0.05)';
+                    ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, h); ctx.stroke();
+                }
+                var gy = cy - i * sc;
+                if (gy > 20 && gy < h - 20) {
+                    ctx.fillText(i, cx - 14, gy + 3);
+                }
+            }
+
+            // Parabola
+            ctx.beginPath();
+            ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2.5;
+            ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 10;
+            var started = false;
+            for (var px = -w; px <= w * 2; px += 2) {
+                var x = (px - cx) / sc;
+                var y = a * x * x + b * x + c;
+                var sy = cy - y * sc;
+                if (!started) { ctx.moveTo(px, sy); started = true; }
+                else ctx.lineTo(px, sy);
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // Roots (x-intercepts)
+            var disc = b * b - 4 * a * c;
+            if (disc >= 0) {
+                var r1 = (-b + Math.sqrt(Math.max(0, disc))) / (2 * a);
+                var r2 = (-b - Math.sqrt(Math.max(0, disc))) / (2 * a);
+                [r1, r2].forEach(function(r) {
+                    var rx = cx + r * sc, ry = cy;
+                    ctx.beginPath(); ctx.arc(rx, ry, 6, 0, TAU);
+                    ctx.fillStyle = '#ff3355'; ctx.shadowColor = '#ff3355'; ctx.shadowBlur = 12;
+                    ctx.fill(); ctx.shadowBlur = 0;
+                    ctx.font = '10px '+F; ctx.fillStyle = '#ff3355'; ctx.textAlign = 'center';
+                    ctx.fillText('x=' + round(r, 2), rx, ry + 20);
+                });
+            }
+
+            // Vertex
+            var vx = -b / (2 * a);
+            var vy = a * vx * vx + b * vx + c;
+            var svx = cx + vx * sc, svy = cy - vy * sc;
+            ctx.beginPath(); ctx.arc(svx, svy, 5, 0, TAU);
+            ctx.fillStyle = '#ffaa00'; ctx.fill();
+            ctx.font = '9px '+F; ctx.fillStyle = '#ffaa00'; ctx.textAlign = 'center';
+            ctx.fillText('V(' + round(vx,1) + ',' + round(vy,1) + ')', svx, svy - 10);
+
+            // Info panel
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,10,20,0.7)';
+            roundRect(ctx, 20, 40, 280, 180, 8); ctx.fill();
+            ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 1; ctx.stroke();
+            ctx.font = 'bold 14px '+F; ctx.fillStyle = '#00ffff'; ctx.textAlign = 'left';
+            ctx.fillText(formatEq(round(a,1), round(b,1), round(c,1)), 34, 68);
+            ctx.font = '11px '+F; ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            var info = [
+                'a = ' + round(a,2) + '  b = ' + round(b,2) + '  c = ' + round(c,2),
+                'D = ' + round(disc, 2),
+                'Nature: ' + (disc > 0.01 ? 'Real & Distinct' : disc > -0.01 ? 'Real & Equal' : 'Complex'),
+                disc >= 0 ? 'Roots: ' + round((-b+Math.sqrt(Math.max(0,disc)))/(2*a),2) + ', ' + round((-b-Math.sqrt(Math.max(0,disc)))/(2*a),2) : 'No real roots',
+                'Vertex: (' + round(vx,2) + ', ' + round(vy,2) + ')',
+            ];
+            info.forEach(function(line, i) { ctx.fillText(line, 34, 92 + i * 18); });
+            ctx.restore();
+
+            // Controls hint
+            ctx.save(); ctx.font = '9px '+F; ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.textAlign = 'center';
+            ctx.fillText('Scroll / +- = change a  |  Left/Right = change b  |  Up/Down = change c  |  Hand: move to adjust', w/2, h - 30);
+            ctx.restore();
+        }
+
+        // ── Learn Mode ──
+        function drawLearnMode(ctx, w, h) {
+            var slide = LEARN_SLIDES[S.learnSlide];
+            var cx = w / 2, startY = 80;
+
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,10,20,0.6)';
+            roundRect(ctx, w * 0.1, 50, w * 0.8, h - 120, 12); ctx.fill();
+            ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 1; ctx.stroke();
+
+            ctx.font = 'bold 18px '+F; ctx.fillStyle = '#ffaa00'; ctx.textAlign = 'center';
+            ctx.fillText(slide.title, cx, startY);
+
+            ctx.font = '14px '+F; ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.textAlign = 'left';
+            slide.content.forEach(function(line, i) {
+                ctx.fillText(line, w * 0.15, startY + 40 + i * 24);
+            });
+
+            // Navigation
+            ctx.font = '11px '+F; ctx.fillStyle = '#00ffff'; ctx.textAlign = 'center';
+            ctx.fillText('[\u2190] Prev    ' + (S.learnSlide + 1) + ' / ' + LEARN_SLIDES.length + '    [\u2192] Next', cx, h - 45);
+            ctx.restore();
+        }
+
+        // ── Practice Mode ──
+        function drawPracticeMode(ctx, w, h) {
+            if (!S.practiceQ) return;
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,10,20,0.6)';
+            roundRect(ctx, w * 0.1, 50, w * 0.8, h - 120, 12); ctx.fill();
+            ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 1; ctx.stroke();
+
+            // Score bar
+            ctx.font = '11px '+F; ctx.fillStyle = '#ffaa00'; ctx.textAlign = 'right';
+            ctx.fillText('Score: ' + S.practiceScore + '/' + S.practiceTotal + '  Streak: ' + S.practiceStreak, w * 0.85, 75);
+
+            // Question
+            ctx.font = 'bold 16px '+F; ctx.fillStyle = '#00ffff'; ctx.textAlign = 'center';
+            var lines = S.practiceQ.question.split('\n');
+            lines.forEach(function(line, i) {
+                ctx.fillText(line, w / 2, 110 + i * 24);
+            });
+
+            ctx.font = '12px '+F; ctx.fillStyle = 'rgba(255,255,255,0.4)';
+            ctx.fillText('Press SPACE or click to answer', w / 2, h / 2 + 20);
+            ctx.restore();
+        }
+
+        // ── Nature of Roots Explorer ──
+        function drawNatureMode(ctx, w, h, time) {
+            var a = S.natureA, b = S.natureB, c = S.natureC;
+            var disc = b * b - 4 * a * c;
+
+            // Visual representation
+            var cx = w / 2, cy = h / 2 - 20;
+
+            // Equation display
+            ctx.save();
+            ctx.font = 'bold 20px '+F; ctx.fillStyle = '#00ffff'; ctx.textAlign = 'center';
+            ctx.fillText(formatEq(a, b, c), cx, 70);
+            ctx.font = '14px '+F;
+            ctx.fillText('D = b\u00B2 - 4ac = ' + (b*b) + ' - ' + (4*a*c) + ' = ' + disc, cx, 100);
+
+            // Nature indicator - big visual
+            var natureColor, natureText, natureDesc;
+            if (disc > 0) { natureColor = '#00ff88'; natureText = 'D > 0'; natureDesc = 'TWO REAL & DISTINCT ROOTS'; }
+            else if (disc === 0) { natureColor = '#ffaa00'; natureText = 'D = 0'; natureDesc = 'TWO REAL & EQUAL ROOTS'; }
+            else { natureColor = '#ff3355'; natureText = 'D < 0'; natureDesc = 'NO REAL ROOTS (COMPLEX)'; }
+
+            // Pulsing circle
+            var pulse = Math.sin(time * 0.003) * 10;
+            ctx.beginPath(); ctx.arc(cx, cy, 80 + pulse, 0, TAU);
+            ctx.strokeStyle = natureColor; ctx.lineWidth = 3; ctx.shadowColor = natureColor; ctx.shadowBlur = 25;
+            ctx.stroke(); ctx.shadowBlur = 0;
+
+            ctx.font = 'bold 24px '+F; ctx.fillStyle = natureColor; ctx.textAlign = 'center';
+            ctx.fillText(natureText, cx, cy - 5);
+            ctx.font = '12px '+F;
+            ctx.fillText(disc, cx, cy + 20);
+            ctx.font = 'bold 14px '+F;
+            ctx.fillText(natureDesc, cx, cy + 120);
+
+            // Sliders display
+            ctx.font = '11px '+F; ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.textAlign = 'center';
+            ctx.fillText('a = ' + a + '    b = ' + b + '    c = ' + c, cx, cy + 150);
+            ctx.font = '9px '+F; ctx.fillStyle = 'rgba(255,255,255,0.25)';
+            ctx.fillText('Q/A = change a  |  W/S = change b  |  E/D = change c  |  Hand: position controls b,c', cx, h - 30);
+
+            // Roots if real
+            if (disc >= 0) {
+                var r1 = round((-b + Math.sqrt(disc)) / (2*a), 3);
+                var r2 = round((-b - Math.sqrt(disc)) / (2*a), 3);
+                ctx.font = '13px '+F; ctx.fillStyle = natureColor;
+                ctx.fillText('Roots: x\u2081 = ' + r1 + ',  x\u2082 = ' + r2, cx, cy + 170);
+            }
+            ctx.restore();
+        }
+
+        // ── Word Problems ──
+        function drawWordMode(ctx, w, h) {
+            var prob = WORD_PROBLEMS[S.wordIdx];
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,10,20,0.6)';
+            roundRect(ctx, w*0.08, 50, w*0.84, h-120, 12); ctx.fill();
+            ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 1; ctx.stroke();
+
+            // Problem
+            ctx.font = '14px '+F; ctx.fillStyle = '#ffaa00'; ctx.textAlign = 'left';
+            ctx.fillText('Problem ' + (S.wordIdx+1) + ' of ' + WORD_PROBLEMS.length, w*0.13, 80);
+
+            ctx.font = '13px '+F; ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            wrapText(ctx, prob.q, w*0.13, 110, w*0.74, 20);
+
+            // Setup
+            ctx.font = '12px '+F; ctx.fillStyle = '#00ffff';
+            var setupLines = prob.setup.split('\n');
+            setupLines.forEach(function(l, i) { ctx.fillText(l, w*0.13, 200 + i * 20); });
+
+            // Solution
+            var sol = solveQuadratic(prob.eq[0], prob.eq[1], prob.eq[2]);
+            ctx.font = '11px '+F; ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            var solY = 200 + setupLines.length * 20 + 20;
+            sol.steps.forEach(function(s, i) {
+                ctx.fillText(s, w*0.13, solY + i * 16);
+            });
+
+            // Answer
+            ctx.font = 'bold 14px '+F; ctx.fillStyle = '#00ff88';
+            ctx.fillText('Answer: ' + prob.ans, w*0.13, h - 80);
+
+            // Nav
+            ctx.font = '11px '+F; ctx.fillStyle = '#00ffff'; ctx.textAlign = 'center';
+            ctx.fillText('[\u2190] Prev    [\u2192] Next', w/2, h - 45);
+            ctx.restore();
+        }
+
+        function wrapText(ctx, text, x, y, maxW, lineH) {
+            var words = text.split(' ');
+            var line = '';
+            for (var i = 0; i < words.length; i++) {
+                var test = line + words[i] + ' ';
+                if (ctx.measureText(test).width > maxW && i > 0) {
+                    ctx.fillText(line, x, y);
+                    line = words[i] + ' '; y += lineH;
+                } else { line = test; }
+            }
+            ctx.fillText(line, x, y);
+        }
+
+        // ── Solve Mode ──
+        function drawSolveMode(ctx, w, h) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,10,20,0.6)';
+            roundRect(ctx, w*0.1, 50, w*0.8, h-120, 12); ctx.fill();
+            ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 1; ctx.stroke();
+
+            ctx.font = 'bold 16px '+F; ctx.fillStyle = '#ffaa00'; ctx.textAlign = 'center';
+            ctx.fillText('QUADRATIC EQUATION SOLVER', w/2, 80);
+            ctx.font = '12px '+F; ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillText('Enter a, b, c for ax\u00B2 + bx + c = 0', w/2, 105);
+            ctx.fillText('Press S to solve (current: a=' + round(S.targetA,1) + ' b=' + round(S.targetB,1) + ' c=' + round(S.targetC,1) + ')', w/2, 125);
+
+            if (S.solveResult) {
+                ctx.font = '12px '+F; ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.textAlign = 'left';
+                S.solveResult.steps.forEach(function(s, i) {
+                    ctx.fillText(s, w*0.15, 160 + i * 20);
+                });
+            }
+            ctx.restore();
+        }
+
+        function roundRect(ctx,x,y,w,h,r) { ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r); ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r); ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r); ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r); ctx.closePath(); }
+
+        function drawToast(ctx, w, time) {
+            if (!S.toast || time > S.toast.until) return;
+            var rem = S.toast.until - time;
+            ctx.save(); ctx.globalAlpha = rem < 500 ? rem/500 : 1;
+            ctx.font = '13px '+F; ctx.textAlign = 'center';
+            var tw = ctx.measureText(S.toast.text).width + 40;
+            ctx.fillStyle = 'rgba(0,20,40,0.85)';
+            roundRect(ctx, w/2-tw/2, 30, tw, 28, 4); ctx.fill();
+            ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 1; ctx.stroke();
+            ctx.fillStyle = '#00ffff'; ctx.fillText(S.toast.text, w/2, 49);
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // HAND TRACKING → GRAPH CONTROL
+        // ═══════════════════════════════════════════════════════════
+
+        function processGestures(hands) {
+            if (!hands || hands.length === 0) { S.handCursor = null; return; }
+            var h = hands[0], w = S.w, hh = S.h;
+            var raw = { x: (1 - h[8].x) * w, y: h[8].y * hh };
+            if (!S.handCursor) S.handCursor = { x: raw.x, y: raw.y };
+            S.handCursor.x = lerp(S.handCursor.x, raw.x, 0.3);
+            S.handCursor.y = lerp(S.handCursor.y, raw.y, 0.3);
+
+            if (S.mode === 'graph') {
+                // Hand X controls b (-6 to 6), Hand Y controls c (-8 to 8)
+                S.targetB = ((S.handCursor.x / w) - 0.5) * 12;
+                S.targetC = ((0.5 - S.handCursor.y / hh)) * 16;
+            }
+            if (S.mode === 'nature') {
+                S.natureB = Math.round(((S.handCursor.x / w) - 0.5) * 12);
+                S.natureC = Math.round((0.5 - S.handCursor.y / hh) * 12);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RENDER LOOP
+        // ═══════════════════════════════════════════════════════════
+
+        function renderLoop(ts) {
+            var ctx = S.ctx, w = S.w, h = S.h;
+            S.frameCount++;
+            if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
+
+            ctx.fillStyle = '#080810'; ctx.fillRect(0,0,w,h);
+
+            // Camera bg
+            var vid = document.getElementById('video');
+            if (vid && vid.readyState >= 2) {
+                ctx.save(); ctx.globalAlpha = 0.05;
+                ctx.translate(w,0); ctx.scale(-1,1);
+                ctx.drawImage(vid, 0, 0, w, h);
+                ctx.restore();
+            }
+
+            drawHUD(ctx, w, h, ts);
+
+            switch (S.mode) {
+                case 'graph': drawGraphLab(ctx, w, h, ts); break;
+                case 'learn': drawLearnMode(ctx, w, h); break;
+                case 'practice': drawPracticeMode(ctx, w, h); break;
+                case 'nature': drawNatureMode(ctx, w, h, ts); break;
+                case 'word': drawWordMode(ctx, w, h); break;
+                case 'solve': drawSolveMode(ctx, w, h); break;
+            }
+
+            // Hand cursor
+            if (S.handCursor) {
+                var t = ts * 0.004;
+                ctx.save(); ctx.strokeStyle='rgba(0,255,255,0.4)'; ctx.lineWidth=1.5;
+                for (var i=0;i<4;i++){ctx.beginPath();ctx.arc(S.handCursor.x,S.handCursor.y,14,t+i*PI/2,t+i*PI/2+PI/4);ctx.stroke();}
+                ctx.beginPath();ctx.arc(S.handCursor.x,S.handCursor.y,2,0,TAU);ctx.fillStyle='#00ffff';ctx.fill();
+                ctx.restore();
+            }
+
+            drawToast(ctx, w, ts);
+            requestAnimationFrame(renderLoop);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INPUT
+        // ═══════════════════════════════════════════════════════════
+
+        function initInput() {
+            window.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') { showMenu(); return; }
+
+                if (S.mode === 'graph') {
+                    if (e.key === '+' || e.key === '=') S.targetA = Math.min(5, S.targetA + 0.5);
+                    if (e.key === '-') S.targetA = Math.max(-5, S.targetA - 0.5);
+                    if (e.key === 'ArrowLeft') S.targetB = Math.max(-10, S.targetB - 0.5);
+                    if (e.key === 'ArrowRight') S.targetB = Math.min(10, S.targetB + 0.5);
+                    if (e.key === 'ArrowUp') S.targetC = Math.min(10, S.targetC + 0.5);
+                    if (e.key === 'ArrowDown') S.targetC = Math.max(-10, S.targetC - 0.5);
+                    if (e.key === 'r' || e.key === 'R') { S.targetA = 1; S.targetB = 0; S.targetC = 0; }
+                }
+                if (S.mode === 'learn') {
+                    if (e.key === 'ArrowRight' || e.key === ' ') S.learnSlide = Math.min(LEARN_SLIDES.length - 1, S.learnSlide + 1);
+                    if (e.key === 'ArrowLeft') S.learnSlide = Math.max(0, S.learnSlide - 1);
+                }
+                if (S.mode === 'practice') {
+                    if (e.key === ' ' || e.key === 'Enter') openAnswerOverlay();
+                }
+                if (S.mode === 'nature') {
+                    if (e.key === 'q' || e.key === 'Q') S.natureA = Math.min(5, S.natureA + 1);
+                    if (e.key === 'a' || e.key === 'A') S.natureA = Math.max(-5, S.natureA - 1);
+                    if (e.key === 'w' || e.key === 'W') S.natureB++;
+                    if (e.key === 's' || e.key === 'S') S.natureB--;
+                    if (e.key === 'e' || e.key === 'E') S.natureC++;
+                    if (e.key === 'd' || e.key === 'D') S.natureC--;
+                    if (S.natureA === 0) S.natureA = 1;
+                }
+                if (S.mode === 'word') {
+                    if (e.key === 'ArrowRight') S.wordIdx = (S.wordIdx + 1) % WORD_PROBLEMS.length;
+                    if (e.key === 'ArrowLeft') S.wordIdx = (S.wordIdx - 1 + WORD_PROBLEMS.length) % WORD_PROBLEMS.length;
+                }
+                if (S.mode === 'solve') {
+                    if (e.key === 's' || e.key === 'S') {
+                        S.solveResult = solveQuadratic(Math.round(S.targetA), Math.round(S.targetB), Math.round(S.targetC));
+                    }
+                }
+            });
+
+            S.canvas.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                if (S.mode === 'graph') {
+                    S.targetA = Math.max(-5, Math.min(5, S.targetA - e.deltaY * 0.005));
+                    if (Math.abs(S.targetA) < 0.1) S.targetA = 0.1;
+                }
+            }, { passive: false });
+        }
+
+        // ── Answer overlay for practice ──
+        function openAnswerOverlay() {
+            if (!S.practiceQ) return;
+            document.getElementById('ao-question').textContent = S.practiceQ.question;
+            document.getElementById('ao-input').value = '';
+            document.getElementById('ao-feedback').textContent = '';
+            document.getElementById('answer-overlay').style.display = 'block';
+            setTimeout(function() { document.getElementById('ao-input').focus(); }, 100);
+        }
+
+        function checkAnswer() {
+            var input = document.getElementById('ao-input').value.trim();
+            var correct = S.practiceQ.answer;
+            var fb = document.getElementById('ao-feedback');
+            S.practiceTotal++;
+
+            // Flexible matching
+            var inputClean = input.replace(/\s/g, '').toLowerCase();
+            var correctClean = correct.replace(/\s/g, '').toLowerCase();
+
+            if (inputClean === correctClean) {
+                fb.style.color = '#00ff88';
+                fb.textContent = '\u2713 Correct!';
+                S.practiceScore++;
+                S.practiceStreak++;
+                setTimeout(nextPractice, 1200);
+            } else {
+                fb.style.color = '#ff3355';
+                fb.textContent = '\u2717 Answer: ' + correct;
+                S.practiceStreak = 0;
+                setTimeout(nextPractice, 2500);
+            }
+        }
+
+        function nextPractice() {
+            document.getElementById('answer-overlay').style.display = 'none';
+            S.practiceQ = generatePractice();
+        }
+
+        function initAnswerOverlay() {
+            document.getElementById('ao-submit').onclick = checkAnswer;
+            document.getElementById('ao-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') checkAnswer(); });
+            document.getElementById('ao-hint').onclick = function() {
+                document.getElementById('ao-feedback').style.color = '#ffaa00';
+                document.getElementById('ao-feedback').textContent = 'Hint: ' + S.practiceQ.hint;
+            };
+            document.getElementById('ao-skip').onclick = function() {
+                document.getElementById('ao-feedback').style.color = '#ff3355';
+                document.getElementById('ao-feedback').textContent = 'Answer: ' + S.practiceQ.answer;
+                S.practiceTotal++;
+                S.practiceStreak = 0;
+                setTimeout(nextPractice, 2000);
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // MODE SELECTION
+        // ═══════════════════════════════════════════════════════════
+
+        function showMenu() {
+            S.mode = null;
+            document.getElementById('mode-select').style.display = 'block';
+            document.getElementById('answer-overlay').style.display = 'none';
+        }
+
+        function selectMode(mode) {
+            S.mode = mode;
+            document.getElementById('mode-select').style.display = 'none';
+            if (mode === 'practice') S.practiceQ = generatePractice();
+            if (mode === 'solve') S.solveResult = null;
+            showToast(mode.toUpperCase() + ' mode');
+        }
+
+        function initModeSelect() {
+            document.querySelectorAll('.ms-btn').forEach(function(btn) {
+                btn.onclick = function() { selectMode(btn.dataset.mode); };
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // MEDIAPIPE
+        // ═══════════════════════════════════════════════════════════
+
+        var mpHands;
+        try {
+            mpHands = new Hands({ locateFile: function(f) { return 'lib/hands/' + f; } });
+            mpHands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.4 });
+            mpHands.onResults(function(results) {
+                S.cameraReady = true;
+                S.handData = results.multiHandLandmarks && results.multiHandLandmarks.length > 0 ? results.multiHandLandmarks : null;
+                if (S.handData) processGestures(S.handData);
+            });
+        } catch(e) {}
+
+        function startLocalCam() {
+            var video = document.getElementById('video');
+            if (mpHands) {
+                var _sk = false;
+                S.localCamera = new Camera(video, { onFrame: function() { _sk=!_sk; if(_sk) return Promise.resolve(); return mpHands.send({image:video}); }, width: 320, height: 240 });
+                S.localCamera.start().catch(function() {});
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════════════
+
+        function init() {
+            S.canvas = document.getElementById('c'); S.ctx = S.canvas.getContext('2d');
+            function resize() { S.w = window.innerWidth; S.h = window.innerHeight; S.canvas.width = S.w; S.canvas.height = S.h; }
+            window.addEventListener('resize', resize); resize();
+            initInput();
+            initModeSelect();
+            initAnswerOverlay();
+            startLocalCam();
+            showMenu();
+            S.lastFpsTime = performance.now();
+            requestAnimationFrame(renderLoop);
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>
