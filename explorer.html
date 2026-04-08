@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS | World Explorer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #080810; }
+        body { font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
+        #video { display: none; }
+        #c { display: block; width: 100vw; height: 100vh; cursor: none; }
+        #cam-choice { display: none; position: fixed; inset: 0; z-index: 150; background: rgba(8,8,16,0.95); }
+        .cc-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); backdrop-filter: blur(20px); max-width: 500px; }
+        .cc-title { font-size: 14px; letter-spacing: 4px; opacity: 0.7; margin-bottom: 8px; }
+        .cc-sub { font-size: 11px; opacity: 0.4; margin-bottom: 24px; }
+        .cc-buttons { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+        .cc-btn { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 18px 24px; font-family: inherit; font-size: 13px; cursor: pointer; border-radius: 8px; transition: all 0.2s; min-width: 140px; }
+        .cc-btn:hover { background: rgba(0,255,255,0.1); border-color: #00ffff; box-shadow: 0 0 20px rgba(0,255,255,0.2); }
+        .cc-btn .icon { font-size: 28px; display: block; margin-bottom: 8px; }
+        .cc-btn .label { font-size: 10px; opacity: 0.5; margin-top: 4px; display: block; }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="c"></canvas>
+
+    <div id="cam-choice">
+        <div class="cc-card">
+            <div class="cc-title">W O R L D &nbsp; E X P L O R E R</div>
+            <div class="cc-sub">Navigate worlds, grab objects, discover secrets. Move hand to look around, pinch to grab.</div>
+            <div class="cc-buttons">
+                <button class="cc-btn" id="cc-local"><span class="icon">&#x1F4F7;</span>CAMERA<span class="label">Hand tracking</span></button>
+                <button class="cc-btn" id="cc-skip"><span class="icon">&#x1F5B1;</span>MOUSE<span class="label">Click &amp; drag</span></button>
+            </div>
+        </div>
+    </div>
+
+    <script src="lib/hands/hands.js"></script>
+    <script src="lib/camera_utils/camera_utils.js"></script>
+
+    <script>
+    (function() {
+        'use strict';
+        var F = "'Courier New',Consolas,monospace";
+        var PI = Math.PI, TAU = PI * 2;
+
+        // ═══════════════════════════════════════════════════════════
+        // WORLDS
+        // ═══════════════════════════════════════════════════════════
+
+        var WORLDS = [
+            {
+                name: 'DEEP SPACE', icon: '&#x2B50;', bg1: '#020010', bg2: '#0a0030',
+                desc: 'Collect cosmic artifacts among the stars',
+                objects: [
+                    { x: 200, y: 300, type: 'crystal', color: '#00ffff', name: 'Ice Crystal', size: 20, collected: false, bobSpeed: 1.2 },
+                    { x: 600, y: 150, type: 'star', color: '#ffdd00', name: 'Nova Fragment', size: 18, collected: false, bobSpeed: 0.8 },
+                    { x: -300, y: 400, type: 'orb', color: '#ff00ff', name: 'Dark Matter Orb', size: 22, collected: false, bobSpeed: 1.5 },
+                    { x: 900, y: -100, type: 'ring', color: '#ffaa00', name: 'Saturn Ring', size: 25, collected: false, bobSpeed: 0.6 },
+                    { x: -500, y: -200, type: 'crystal', color: '#00ff88', name: 'Emerald Shard', size: 16, collected: false, bobSpeed: 1.0 },
+                    { x: 400, y: -350, type: 'star', color: '#ff3355', name: 'Red Dwarf Core', size: 24, collected: false, bobSpeed: 0.7 },
+                    { x: -100, y: 500, type: 'orb', color: '#0088ff', name: 'Nebula Essence', size: 20, collected: false, bobSpeed: 1.1 },
+                    { x: 1100, y: 300, type: 'crystal', color: '#ffffff', name: 'Diamond Comet', size: 15, collected: false, bobSpeed: 1.3 },
+                ],
+            },
+            {
+                name: 'OCEAN DEEP', icon: '&#x1F30A;', bg1: '#001020', bg2: '#003050',
+                desc: 'Dive into the abyss and find lost treasures',
+                objects: [
+                    { x: 100, y: 200, type: 'shell', color: '#ffaa00', name: 'Golden Shell', size: 18, collected: false, bobSpeed: 0.5 },
+                    { x: 500, y: 400, type: 'pearl', color: '#ffffff', name: 'Giant Pearl', size: 22, collected: false, bobSpeed: 0.3 },
+                    { x: -200, y: 100, type: 'coral', color: '#ff6666', name: 'Fire Coral', size: 20, collected: false, bobSpeed: 0.7 },
+                    { x: 700, y: -50, type: 'star', color: '#00ffff', name: 'Starfish', size: 16, collected: false, bobSpeed: 0.9 },
+                    { x: -400, y: 350, type: 'orb', color: '#00ff88', name: 'Sea Glass', size: 14, collected: false, bobSpeed: 0.6 },
+                    { x: 300, y: -200, type: 'crystal', color: '#0088ff', name: 'Sapphire Trident', size: 24, collected: false, bobSpeed: 0.4 },
+                    { x: 900, y: 200, type: 'ring', color: '#ffdd00', name: 'Sunken Crown', size: 20, collected: false, bobSpeed: 0.8 },
+                    { x: -100, y: -300, type: 'shell', color: '#ff00ff', name: 'Abyssal Conch', size: 18, collected: false, bobSpeed: 1.0 },
+                ],
+            },
+            {
+                name: 'ENCHANTED FOREST', icon: '&#x1F332;', bg1: '#001008', bg2: '#002818',
+                desc: 'Wander the magical woods and gather enchanted relics',
+                objects: [
+                    { x: 150, y: 250, type: 'crystal', color: '#00ff88', name: 'Fairy Dust', size: 14, collected: false, bobSpeed: 1.5 },
+                    { x: -300, y: 100, type: 'orb', color: '#ffaa00', name: 'Amber Sphere', size: 20, collected: false, bobSpeed: 0.6 },
+                    { x: 600, y: 350, type: 'star', color: '#ffdd00', name: 'Firefly Lantern', size: 16, collected: false, bobSpeed: 2.0 },
+                    { x: 400, y: -150, type: 'ring', color: '#aa00ff', name: 'Mystic Ring', size: 18, collected: false, bobSpeed: 0.8 },
+                    { x: -500, y: 400, type: 'crystal', color: '#ff6600', name: 'Dragon Scale', size: 22, collected: false, bobSpeed: 0.5 },
+                    { x: 800, y: 100, type: 'pearl', color: '#ffffff', name: 'Moonstone', size: 18, collected: false, bobSpeed: 0.7 },
+                    { x: -100, y: -350, type: 'orb', color: '#ff3355', name: 'Phoenix Feather', size: 16, collected: false, bobSpeed: 1.2 },
+                    { x: 200, y: 500, type: 'star', color: '#00ffff', name: 'Frozen Tear', size: 15, collected: false, bobSpeed: 0.9 },
+                ],
+            },
+            {
+                name: 'CYBER CITY', icon: '&#x1F3D9;', bg1: '#080012', bg2: '#150030',
+                desc: 'Hack the neon streets and collect digital artifacts',
+                objects: [
+                    { x: 300, y: 200, type: 'crystal', color: '#00ffff', name: 'Data Crystal', size: 18, collected: false, bobSpeed: 1.0 },
+                    { x: -200, y: 350, type: 'orb', color: '#ff00ff', name: 'Virus Core', size: 20, collected: false, bobSpeed: 1.5 },
+                    { x: 700, y: -100, type: 'ring', color: '#ffaa00', name: 'Holo Disc', size: 22, collected: false, bobSpeed: 0.8 },
+                    { x: 100, y: -250, type: 'star', color: '#00ff88', name: 'Matrix Key', size: 16, collected: false, bobSpeed: 1.2 },
+                    { x: -400, y: 100, type: 'crystal', color: '#ff3355', name: 'Firewall Shard', size: 15, collected: false, bobSpeed: 0.7 },
+                    { x: 500, y: 400, type: 'orb', color: '#0088ff', name: 'AI Module', size: 24, collected: false, bobSpeed: 0.5 },
+                    { x: 900, y: 250, type: 'pearl', color: '#ffffff', name: 'Quantum Bit', size: 12, collected: false, bobSpeed: 1.8 },
+                    { x: -100, y: 500, type: 'ring', color: '#ffdd00', name: 'Bitcoin', size: 20, collected: false, bobSpeed: 0.9 },
+                ],
+            },
+            {
+                name: 'VOLCANIC WASTELAND', icon: '&#x1F30B;', bg1: '#100000', bg2: '#301000',
+                desc: 'Brave the scorching heat and mine rare elements',
+                objects: [
+                    { x: 200, y: 150, type: 'crystal', color: '#ff3355', name: 'Lava Crystal', size: 20, collected: false, bobSpeed: 0.6 },
+                    { x: -300, y: 300, type: 'orb', color: '#ffaa00', name: 'Magma Core', size: 24, collected: false, bobSpeed: 0.4 },
+                    { x: 600, y: -200, type: 'star', color: '#ffdd00', name: 'Sun Stone', size: 18, collected: false, bobSpeed: 0.8 },
+                    { x: 400, y: 400, type: 'ring', color: '#ff6600', name: 'Obsidian Ring', size: 20, collected: false, bobSpeed: 0.5 },
+                    { x: -500, y: -100, type: 'crystal', color: '#ff00ff', name: 'Hellfire Gem', size: 16, collected: false, bobSpeed: 1.0 },
+                    { x: 800, y: 200, type: 'pearl', color: '#ffffff', name: 'Ash Pearl', size: 14, collected: false, bobSpeed: 0.7 },
+                    { x: -100, y: -400, type: 'orb', color: '#00ffff', name: 'Cryo Relic', size: 22, collected: false, bobSpeed: 1.1 },
+                    { x: 100, y: 500, type: 'star', color: '#00ff88', name: 'Jade Ember', size: 17, collected: false, bobSpeed: 0.9 },
+                ],
+            },
+        ];
+
+        // ═══════════════════════════════════════════════════════════
+        // STATE
+        // ═══════════════════════════════════════════════════════════
+
+        var S = {
+            canvas: null, ctx: null, w: 0, h: 0,
+            // Camera
+            camX: 0, camY: 0, camZoom: 1, targetZoom: 1,
+            // World
+            currentWorld: 0, worldTransition: 0, transitioning: false,
+            // Interaction
+            grabbed: null, // index of grabbed object
+            hovered: -1,
+            // Inventory
+            inventory: [],
+            totalCollected: 0,
+            // Particles (ambient)
+            particles: [],
+            // Effects
+            collectEffects: [],
+            // Stars (for space bg)
+            stars: [],
+            // Hand
+            handCursor: null, handPrevPinch: false, handPrevFist: false,
+            // Mouse
+            mouseX: 0, mouseY: 0, mouseDown: false, dragStartX: 0, dragStartY: 0, camDragX: 0, camDragY: 0,
+            // Camera feed
+            cameraReady: false, localCamera: null,
+            // FPS
+            fps: 0, frameCount: 0, lastFpsTime: 0,
+            toast: null,
+        };
+
+        // ═══════════════════════════════════════════════════════════
+        // UTILS
+        // ═══════════════════════════════════════════════════════════
+
+        function showToast(t) { S.toast = { text: t, until: performance.now() + 2500 }; }
+        function lerp(a,b,t) { return a+(b-a)*t; }
+        function rand(a,b) { return a + Math.random() * (b - a); }
+        function roundRect(ctx,x,y,w,h,r) { ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r); ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r); ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r); ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r); ctx.closePath(); }
+
+        function worldToScreen(wx, wy) {
+            return {
+                x: (wx - S.camX) * S.camZoom + S.w / 2,
+                y: (wy - S.camY) * S.camZoom + S.h / 2,
+            };
+        }
+        function screenToWorld(sx, sy) {
+            return {
+                x: (sx - S.w / 2) / S.camZoom + S.camX,
+                y: (sy - S.h / 2) / S.camZoom + S.camY,
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INIT AMBIENT
+        // ═══════════════════════════════════════════════════════════
+
+        function initStars() {
+            S.stars = [];
+            for (var i = 0; i < 200; i++) {
+                S.stars.push({ x: rand(-2000, 2000), y: rand(-2000, 2000), size: rand(0.5, 2.5), brightness: rand(0.3, 1), twinkleSpeed: rand(0.5, 3), layer: Math.floor(rand(0, 3)) });
+            }
+        }
+
+        function spawnAmbientParticle() {
+            var world = WORLDS[S.currentWorld];
+            if (S.particles.length > 60) return;
+            var p = { x: rand(S.camX - 600, S.camX + 600), y: rand(S.camY - 400, S.camY + 400), vx: 0, vy: 0, size: rand(1, 4), life: 1, color: '#ffffff', maxLife: rand(2, 5) };
+            switch (S.currentWorld) {
+                case 0: p.color = 'rgba(100,150,255,0.3)'; p.vy = rand(-0.3, 0.3); p.vx = rand(-0.2, 0.2); break; // space dust
+                case 1: p.color = 'rgba(100,200,255,0.2)'; p.vy = -rand(0.3, 1); p.size = rand(2, 6); break; // bubbles
+                case 2: p.color = 'rgba(100,255,100,0.2)'; p.vy = rand(0.2, 0.5); p.vx = rand(-0.3, 0.3); break; // leaves
+                case 3: p.color = 'rgba(0,255,255,0.15)'; p.vy = -rand(0.5, 1.5); p.size = rand(1, 2); break; // data bits
+                case 4: p.color = 'rgba(255,100,0,0.2)'; p.vy = -rand(0.5, 2); p.size = rand(1, 3); break; // embers
+            }
+            S.particles.push(p);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // BACKGROUNDS
+        // ═══════════════════════════════════════════════════════════
+
+        function drawBackground(ctx, w, h, time) {
+            var world = WORLDS[S.currentWorld];
+            // Gradient
+            var grad = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w, h));
+            grad.addColorStop(0, world.bg2);
+            grad.addColorStop(1, world.bg1);
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, w, h);
+
+            switch (S.currentWorld) {
+                case 0: drawSpaceBG(ctx, w, h, time); break;
+                case 1: drawOceanBG(ctx, w, h, time); break;
+                case 2: drawForestBG(ctx, w, h, time); break;
+                case 3: drawCityBG(ctx, w, h, time); break;
+                case 4: drawVolcanoBG(ctx, w, h, time); break;
+            }
+        }
+
+        function drawSpaceBG(ctx, w, h, time) {
+            S.stars.forEach(function(s) {
+                var parallax = 0.2 + s.layer * 0.3;
+                var sx = (s.x - S.camX * parallax) * S.camZoom + w / 2;
+                var sy = (s.y - S.camY * parallax) * S.camZoom + h / 2;
+                // Wrap
+                sx = ((sx % w) + w) % w;
+                sy = ((sy % h) + h) % h;
+                var twinkle = (Math.sin(time * 0.001 * s.twinkleSpeed + s.x) + 1) / 2;
+                ctx.globalAlpha = s.brightness * (0.5 + twinkle * 0.5);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(sx, sy, s.size * S.camZoom, s.size * S.camZoom);
+            });
+            ctx.globalAlpha = 1;
+            // Nebula
+            var nx = w * 0.7 - S.camX * 0.1, ny = h * 0.3 - S.camY * 0.1;
+            var ng = ctx.createRadialGradient(nx, ny, 0, nx, ny, 200);
+            ng.addColorStop(0, 'rgba(100,0,200,0.08)');
+            ng.addColorStop(1, 'transparent');
+            ctx.fillStyle = ng; ctx.fillRect(0, 0, w, h);
+        }
+
+        function drawOceanBG(ctx, w, h, time) {
+            // Light rays from above
+            ctx.save();
+            for (var i = 0; i < 5; i++) {
+                var rx = (w * 0.15 + i * w * 0.18) - (S.camX * 0.05);
+                ctx.fillStyle = 'rgba(0,150,200,0.03)';
+                ctx.beginPath();
+                ctx.moveTo(rx - 20, 0);
+                ctx.lineTo(rx + 40, h);
+                ctx.lineTo(rx - 60, h);
+                ctx.closePath();
+                ctx.fill();
+            }
+            ctx.restore();
+            // Caustics
+            for (var i = 0; i < 8; i++) {
+                var cx = (i * 200 + Math.sin(time * 0.0005 + i) * 50) - S.camX * 0.15;
+                var cy = (100 + Math.cos(time * 0.0007 + i * 2) * 30) - S.camY * 0.15;
+                cx = ((cx % w) + w) % w;
+                ctx.beginPath(); ctx.arc(cx, cy, 30 + Math.sin(time * 0.002 + i) * 10, 0, TAU);
+                ctx.fillStyle = 'rgba(0,200,255,0.02)'; ctx.fill();
+            }
+        }
+
+        function drawForestBG(ctx, w, h, time) {
+            // Tree silhouettes at different depths
+            [0.15, 0.3, 0.5].forEach(function(depth, layer) {
+                var ox = -S.camX * depth;
+                ctx.fillStyle = 'rgba(0,' + (30 + layer * 20) + ',0,' + (0.15 - layer * 0.03) + ')';
+                for (var i = -3; i < 15; i++) {
+                    var tx = ox + i * 150 + Math.sin(i * 3) * 30;
+                    tx = ((tx % (w + 200)) + w + 200) % (w + 200) - 100;
+                    var th = 200 + layer * 50 + Math.sin(i * 7) * 40;
+                    var base = h - 50 + S.camY * depth;
+                    ctx.beginPath();
+                    ctx.moveTo(tx - 30 - layer * 10, base);
+                    ctx.lineTo(tx, base - th);
+                    ctx.lineTo(tx + 30 + layer * 10, base);
+                    ctx.fill();
+                }
+            });
+        }
+
+        function drawCityBG(ctx, w, h, time) {
+            // Skyline
+            var ox = -S.camX * 0.2;
+            ctx.fillStyle = 'rgba(20,0,40,0.5)';
+            for (var i = -2; i < 12; i++) {
+                var bx = ox + i * 120;
+                bx = ((bx % (w + 200)) + w + 200) % (w + 200) - 100;
+                var bh = 100 + Math.sin(i * 5) * 80 + Math.cos(i * 3) * 40;
+                var bw = 40 + Math.sin(i * 7) * 20;
+                ctx.fillRect(bx, h - bh - S.camY * 0.2, bw, bh + 200);
+            }
+            // Neon lines
+            ctx.strokeStyle = 'rgba(255,0,200,0.06)';
+            ctx.lineWidth = 1;
+            for (var i = 0; i < 6; i++) {
+                var ly = h * 0.3 + i * 80 - S.camY * 0.1;
+                ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(w, ly + Math.sin(i) * 20); ctx.stroke();
+            }
+        }
+
+        function drawVolcanoBG(ctx, w, h, time) {
+            // Lava glow at bottom
+            var lg = ctx.createLinearGradient(0, h * 0.7, 0, h);
+            lg.addColorStop(0, 'transparent');
+            lg.addColorStop(1, 'rgba(200,50,0,0.15)');
+            ctx.fillStyle = lg; ctx.fillRect(0, 0, w, h);
+            // Mountain silhouettes
+            ctx.fillStyle = 'rgba(30,10,0,0.4)';
+            ctx.beginPath();
+            ctx.moveTo(0, h);
+            for (var x = 0; x <= w; x += 20) {
+                var my = h * 0.5 + Math.sin(x * 0.005 + S.camX * 0.001) * 80 + Math.sin(x * 0.013) * 40;
+                ctx.lineTo(x, my - S.camY * 0.15);
+            }
+            ctx.lineTo(w, h); ctx.fill();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // OBJECT DRAWING
+        // ═══════════════════════════════════════════════════════════
+
+        function drawObject(ctx, obj, sx, sy, size, hovered, time) {
+            var bob = Math.sin(time * 0.002 * obj.bobSpeed + obj.x) * 5 * S.camZoom;
+            sy += bob;
+            var r = size * S.camZoom;
+
+            ctx.save();
+            ctx.translate(sx, sy);
+
+            // Glow
+            if (hovered) {
+                ctx.shadowColor = obj.color;
+                ctx.shadowBlur = 30;
+            } else {
+                ctx.shadowColor = obj.color;
+                ctx.shadowBlur = 12;
+            }
+
+            ctx.strokeStyle = obj.color;
+            ctx.fillStyle = obj.color + '30';
+            ctx.lineWidth = hovered ? 2.5 : 1.5;
+
+            var spin = time * 0.001;
+            switch (obj.type) {
+                case 'crystal':
+                    ctx.beginPath();
+                    ctx.moveTo(0, -r); ctx.lineTo(r * 0.6, -r * 0.2);
+                    ctx.lineTo(r * 0.4, r); ctx.lineTo(-r * 0.4, r);
+                    ctx.lineTo(-r * 0.6, -r * 0.2); ctx.closePath();
+                    ctx.fill(); ctx.stroke();
+                    break;
+                case 'star':
+                    ctx.beginPath();
+                    for (var i = 0; i < 10; i++) {
+                        var a = spin + i * TAU / 10 - PI / 2;
+                        var sr = i % 2 === 0 ? r : r * 0.45;
+                        ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * sr, Math.sin(a) * sr);
+                    }
+                    ctx.closePath(); ctx.fill(); ctx.stroke();
+                    break;
+                case 'orb':
+                    ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU);
+                    ctx.fill(); ctx.stroke();
+                    // Inner glow
+                    var ig = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+                    ig.addColorStop(0, obj.color + '40'); ig.addColorStop(1, 'transparent');
+                    ctx.fillStyle = ig; ctx.fill();
+                    break;
+                case 'ring':
+                    ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.stroke();
+                    ctx.beginPath(); ctx.arc(0, 0, r * 0.6, 0, TAU); ctx.stroke();
+                    // Rotating dot
+                    ctx.beginPath(); ctx.arc(Math.cos(spin * 2) * r * 0.8, Math.sin(spin * 2) * r * 0.8, 3, 0, TAU);
+                    ctx.fillStyle = obj.color; ctx.fill();
+                    break;
+                case 'shell':
+                    ctx.beginPath();
+                    ctx.arc(0, 0, r, PI, 0); // half circle
+                    ctx.lineTo(r, r * 0.3); ctx.quadraticCurveTo(0, r * 0.6, -r, r * 0.3);
+                    ctx.closePath(); ctx.fill(); ctx.stroke();
+                    break;
+                case 'pearl':
+                    ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU);
+                    ctx.fillStyle = obj.color + '60'; ctx.fill(); ctx.stroke();
+                    ctx.beginPath(); ctx.arc(-r * 0.25, -r * 0.25, r * 0.3, 0, TAU);
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.fill();
+                    break;
+                case 'coral':
+                    for (var b = 0; b < 3; b++) {
+                        var bx = (b - 1) * r * 0.5;
+                        var bh = r * (0.8 + Math.sin(b * 3) * 0.3);
+                        ctx.beginPath();
+                        ctx.arc(bx, -bh * 0.3, r * 0.25, 0, TAU); ctx.fill(); ctx.stroke();
+                        ctx.fillRect(bx - 2, -bh * 0.3, 4, bh * 0.6);
+                    }
+                    break;
+            }
+
+            // Name label on hover
+            if (hovered) {
+                ctx.shadowBlur = 0;
+                ctx.font = '11px ' + F;
+                ctx.fillStyle = obj.color;
+                ctx.textAlign = 'center';
+                ctx.fillText(obj.name, 0, -r - 12);
+                ctx.font = '8px ' + F;
+                ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                ctx.fillText('PINCH TO COLLECT', 0, r + 16);
+            }
+
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // HAND TRACKING
+        // ═══════════════════════════════════════════════════════════
+
+        function isFingerCurled(h,t,p){var w=h[0];return Math.hypot(h[t].x-w.x,h[t].y-w.y)<Math.hypot(h[p].x-w.x,h[p].y-w.y);}
+        function isPinching(h){return Math.hypot(h[4].x-h[8].x,h[4].y-h[8].y)<0.06;}
+        function isFist(h){return isFingerCurled(h,8,6)&&isFingerCurled(h,12,10)&&isFingerCurled(h,16,14)&&isFingerCurled(h,20,18);}
+
+        function processGestures(hands) {
+            if (!hands || hands.length === 0) { S.handCursor = null; return; }
+            var h = hands[0], w = S.w, hh = S.h;
+            var raw = { x: (1 - h[8].x) * w, y: h[8].y * hh };
+            if (!S.handCursor) S.handCursor = { x: raw.x, y: raw.y };
+            S.handCursor.x = lerp(S.handCursor.x, raw.x, 0.4);
+            S.handCursor.y = lerp(S.handCursor.y, raw.y, 0.4);
+
+            var pinch = isPinching(h);
+            var fist = isFist(h);
+
+            // Pinch start = collect hovered object
+            if (pinch && !S.handPrevPinch) {
+                if (S.hovered >= 0) collectObject(S.hovered);
+            }
+
+            // Fist = switch world
+            if (fist && !S.handPrevFist) {
+                switchWorld((S.currentWorld + 1) % WORLDS.length);
+            }
+
+            S.handPrevPinch = pinch;
+            S.handPrevFist = fist;
+
+            // Pan camera with hand position (hand at edge = pan that direction)
+            var panSpeed = 3;
+            var edgeZone = 0.2;
+            var nx = S.handCursor.x / w;
+            var ny = S.handCursor.y / hh;
+            if (nx < edgeZone) S.camX -= panSpeed * (edgeZone - nx) / edgeZone;
+            if (nx > 1 - edgeZone) S.camX += panSpeed * (nx - (1 - edgeZone)) / edgeZone;
+            if (ny < edgeZone) S.camY -= panSpeed * (edgeZone - ny) / edgeZone;
+            if (ny > 1 - edgeZone) S.camY += panSpeed * (ny - (1 - edgeZone)) / edgeZone;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // GAME LOGIC
+        // ═══════════════════════════════════════════════════════════
+
+        function collectObject(idx) {
+            var world = WORLDS[S.currentWorld];
+            var obj = world.objects[idx];
+            if (obj.collected) return;
+            obj.collected = true;
+            S.totalCollected++;
+            S.inventory.push({ name: obj.name, color: obj.color, type: obj.type, world: S.currentWorld });
+            var sp = worldToScreen(obj.x, obj.y);
+            S.collectEffects.push({ x: sp.x, y: sp.y, time: performance.now(), name: obj.name, color: obj.color });
+            showToast('Collected: ' + obj.name + '!');
+
+            // Check if all collected in this world
+            var left = world.objects.filter(function(o) { return !o.collected; }).length;
+            if (left === 0) {
+                showToast(world.name + ' COMPLETE!');
+            }
+        }
+
+        function switchWorld(idx) {
+            if (S.transitioning) return;
+            S.transitioning = true;
+            S.worldTransition = 0;
+            setTimeout(function() {
+                S.currentWorld = idx;
+                S.camX = 0; S.camY = 0;
+                S.hovered = -1;
+                setTimeout(function() { S.transitioning = false; }, 500);
+            }, 500);
+            showToast(WORLDS[idx].name);
+        }
+
+        function getHoveredObject(sx, sy) {
+            var world = WORLDS[S.currentWorld];
+            var wpos = screenToWorld(sx, sy);
+            for (var i = world.objects.length - 1; i >= 0; i--) {
+                var obj = world.objects[i];
+                if (obj.collected) continue;
+                var d = Math.hypot(wpos.x - obj.x, wpos.y - obj.y);
+                if (d < obj.size + 15) return i;
+            }
+            return -1;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // DRAWING
+        // ═══════════════════════════════════════════════════════════
+
+        function drawObjects(ctx, time) {
+            var world = WORLDS[S.currentWorld];
+            world.objects.forEach(function(obj, i) {
+                if (obj.collected) return;
+                var sp = worldToScreen(obj.x, obj.y);
+                // Cull off-screen
+                if (sp.x < -50 || sp.x > S.w + 50 || sp.y < -50 || sp.y > S.h + 50) return;
+                drawObject(ctx, obj, sp.x, sp.y, obj.size, S.hovered === i, time);
+            });
+        }
+
+        function drawParticles(ctx, time) {
+            for (var i = S.particles.length - 1; i >= 0; i--) {
+                var p = S.particles[i];
+                p.x += p.vx; p.y += p.vy;
+                p.life -= 1 / (60 * p.maxLife);
+                if (p.life <= 0) { S.particles.splice(i, 1); continue; }
+                var sp = worldToScreen(p.x, p.y);
+                ctx.globalAlpha = p.life * 0.6;
+                ctx.fillStyle = p.color;
+                ctx.beginPath(); ctx.arc(sp.x, sp.y, p.size * S.camZoom, 0, TAU); ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        function drawCollectEffects(ctx, time) {
+            for (var i = S.collectEffects.length - 1; i >= 0; i--) {
+                var e = S.collectEffects[i];
+                var age = (time - e.time) / 1000;
+                if (age > 1.5) { S.collectEffects.splice(i, 1); continue; }
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, 1 - age);
+                ctx.font = 'bold 16px ' + F;
+                ctx.fillStyle = e.color;
+                ctx.textAlign = 'center';
+                ctx.shadowColor = e.color; ctx.shadowBlur = 15;
+                ctx.fillText('+' + e.name, e.x, e.y - age * 60);
+                ctx.shadowBlur = 0;
+                // Expanding ring
+                var r = age * 50;
+                if (r > 0) {
+                    ctx.strokeStyle = e.color; ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.arc(e.x, e.y, r, 0, TAU); ctx.stroke();
+                }
+                ctx.restore();
+            }
+        }
+
+        function drawWorldSelector(ctx, w, h) {
+            var selectorY = h - 60;
+            var totalW = WORLDS.length * 90;
+            var startX = (w - totalW) / 2;
+
+            WORLDS.forEach(function(world, i) {
+                var x = startX + i * 90 + 45;
+                var active = i === S.currentWorld;
+                var collected = world.objects.filter(function(o) { return o.collected; }).length;
+                var total = world.objects.length;
+
+                ctx.save();
+                // Background pill
+                ctx.fillStyle = active ? 'rgba(0,255,255,0.15)' : 'rgba(0,20,40,0.5)';
+                ctx.strokeStyle = active ? '#00ffff' : 'rgba(0,255,255,0.2)';
+                ctx.lineWidth = active ? 2 : 1;
+                roundRect(ctx, x - 38, selectorY - 16, 76, 36, 8);
+                ctx.fill(); ctx.stroke();
+
+                if (active) { ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 10; ctx.stroke(); ctx.shadowBlur = 0; }
+
+                // Name
+                ctx.font = '8px ' + F;
+                ctx.fillStyle = active ? '#00ffff' : 'rgba(255,255,255,0.4)';
+                ctx.textAlign = 'center';
+                ctx.fillText(world.name, x, selectorY + 2);
+
+                // Progress
+                ctx.font = '7px ' + F;
+                ctx.fillStyle = collected === total ? '#00ff88' : 'rgba(255,255,255,0.3)';
+                ctx.fillText(collected + '/' + total, x, selectorY + 13);
+
+                ctx.restore();
+            });
+
+            // Key hints
+            ctx.save();
+            ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.textAlign = 'center';
+            ctx.fillText('1-5 = Switch world  |  Fist = Next world  |  Scroll = Zoom  |  Drag / Hand edge = Pan', w / 2, h - 14);
+            ctx.restore();
+        }
+
+        function drawInventory(ctx, w) {
+            if (S.inventory.length === 0) return;
+            var y = 50;
+            ctx.save();
+            ctx.font = '9px ' + F;
+            ctx.fillStyle = 'rgba(0,255,255,0.5)';
+            ctx.textAlign = 'left';
+            ctx.fillText('COLLECTED: ' + S.totalCollected + '/' + (WORLDS.reduce(function(s,w){return s+w.objects.length;},0)), 14, y);
+
+            // Show last 8 items
+            var shown = S.inventory.slice(-8);
+            shown.forEach(function(item, i) {
+                var ix = 14 + i * 28;
+                ctx.beginPath(); ctx.arc(ix + 10, y + 18, 8, 0, TAU);
+                ctx.fillStyle = item.color + '40'; ctx.fill();
+                ctx.strokeStyle = item.color; ctx.lineWidth = 1; ctx.stroke();
+            });
+            ctx.restore();
+        }
+
+        function drawHandCursor(ctx, time) {
+            if (!S.handCursor) return;
+            var x = S.handCursor.x, y = S.handCursor.y, t = time * 0.004;
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0,255,255,0.5)'; ctx.lineWidth = 1.5;
+            for (var i = 0; i < 4; i++) {
+                ctx.beginPath(); ctx.arc(x, y, 14, t+i*PI/2, t+i*PI/2+PI/4); ctx.stroke();
+            }
+            ctx.beginPath(); ctx.arc(x, y, 2, 0, TAU);
+            ctx.fillStyle = '#00ffff'; ctx.fill();
+            ctx.restore();
+        }
+
+        function drawHUD(ctx, w, h) {
+            var s = 20, o = 8;
+            ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(o,o+s); ctx.lineTo(o,o); ctx.lineTo(o+s,o); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(w-o-s,o); ctx.lineTo(w-o,o); ctx.lineTo(w-o,o+s); ctx.stroke();
+            ctx.save(); ctx.font = '11px ' + F; ctx.fillStyle = '#00ffff'; ctx.globalAlpha = 0.5; ctx.textAlign = 'center';
+            ctx.fillText('J.A.R.V.I.S.  ' + WORLDS[S.currentWorld].name, w / 2, 22);
+            ctx.font = '9px ' + F; ctx.globalAlpha = 0.3;
+            ctx.fillText(WORLDS[S.currentWorld].desc, w / 2, 38);
+            ctx.restore();
+            ctx.save(); ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.fillText('FPS:' + S.fps + '  Zoom:' + S.camZoom.toFixed(1) + 'x', 12, h - 28);
+            ctx.restore();
+        }
+
+        function drawTransition(ctx, w, h) {
+            if (!S.transitioning) return;
+            var alpha = S.worldTransition;
+            S.worldTransition = Math.min(1, S.worldTransition + 0.04);
+            if (S.worldTransition > 0.5) alpha = 1 - (S.worldTransition - 0.5) * 2;
+            ctx.fillStyle = 'rgba(0,0,0,' + Math.max(0, alpha) + ')';
+            ctx.fillRect(0, 0, w, h);
+        }
+
+        function drawToast(ctx, w, time) {
+            if (!S.toast || time > S.toast.until) return;
+            var rem = S.toast.until - time;
+            ctx.save(); ctx.globalAlpha = rem < 500 ? rem / 500 : 1;
+            ctx.font = '13px ' + F; ctx.textAlign = 'center';
+            var tw = ctx.measureText(S.toast.text).width + 40;
+            ctx.fillStyle = 'rgba(0,20,40,0.85)';
+            roundRect(ctx, w/2-tw/2, 55, tw, 28, 4); ctx.fill();
+            ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 1; ctx.stroke();
+            ctx.fillStyle = '#00ffff'; ctx.fillText(S.toast.text, w/2, 74);
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RENDER LOOP
+        // ═══════════════════════════════════════════════════════════
+
+        function renderLoop(ts) {
+            var ctx = S.ctx, w = S.w, h = S.h;
+            S.frameCount++;
+            if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
+
+            // Smooth zoom
+            S.camZoom = lerp(S.camZoom, S.targetZoom, 0.1);
+
+            // Ambient particles
+            if (Math.random() < 0.3) spawnAmbientParticle();
+
+            // Hover detection
+            var mx = S.handCursor ? S.handCursor.x : S.mouseX;
+            var my = S.handCursor ? S.handCursor.y : S.mouseY;
+            S.hovered = getHoveredObject(mx, my);
+
+            // Draw
+            ctx.fillStyle = '#080810'; ctx.fillRect(0, 0, w, h);
+
+            // Camera feed
+            var vid = document.getElementById('video');
+            if (vid && vid.readyState >= 2) {
+                ctx.save(); ctx.globalAlpha = 0.06;
+                ctx.translate(w, 0); ctx.scale(-1, 1);
+                ctx.drawImage(vid, 0, 0, w, h);
+                ctx.restore();
+            }
+
+            drawBackground(ctx, w, h, ts);
+            drawParticles(ctx, ts);
+            drawObjects(ctx, ts);
+            drawCollectEffects(ctx, ts);
+            drawHUD(ctx, w, h);
+            drawInventory(ctx, w);
+            drawWorldSelector(ctx, w, h);
+            drawHandCursor(ctx, ts);
+            drawTransition(ctx, w, h);
+            drawToast(ctx, w, ts);
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INPUT
+        // ═══════════════════════════════════════════════════════════
+
+        function initInput() {
+            var canvas = S.canvas;
+            canvas.addEventListener('mousedown', function(e) {
+                S.mouseDown = true; S.dragStartX = e.clientX; S.dragStartY = e.clientY;
+                S.camDragX = S.camX; S.camDragY = S.camY;
+                // Click to collect
+                if (S.hovered >= 0) collectObject(S.hovered);
+            });
+            canvas.addEventListener('mousemove', function(e) {
+                S.mouseX = e.clientX; S.mouseY = e.clientY;
+                if (S.mouseDown) {
+                    S.camX = S.camDragX - (e.clientX - S.dragStartX) / S.camZoom;
+                    S.camY = S.camDragY - (e.clientY - S.dragStartY) / S.camZoom;
+                }
+            });
+            canvas.addEventListener('mouseup', function() { S.mouseDown = false; });
+            canvas.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                S.targetZoom = Math.max(0.3, Math.min(3, S.targetZoom - e.deltaY * 0.001));
+            }, { passive: false });
+
+            window.addEventListener('keydown', function(e) {
+                if (e.key >= '1' && e.key <= '5') { switchWorld(parseInt(e.key) - 1); return; }
+                var panStep = 30 / S.camZoom;
+                switch (e.key) {
+                    case 'ArrowLeft': case 'a': S.camX -= panStep; break;
+                    case 'ArrowRight': case 'd': S.camX += panStep; break;
+                    case 'ArrowUp': case 'w': S.camY -= panStep; break;
+                    case 'ArrowDown': case 's': S.camY += panStep; break;
+                    case '=': case '+': S.targetZoom = Math.min(3, S.targetZoom + 0.2); break;
+                    case '-': S.targetZoom = Math.max(0.3, S.targetZoom - 0.2); break;
+                }
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // MEDIAPIPE
+        // ═══════════════════════════════════════════════════════════
+
+        var mpHands;
+        try {
+            mpHands = new Hands({ locateFile: function(f) { return 'lib/hands/' + f; } });
+            mpHands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.4 });
+            mpHands.onResults(function(results) {
+                S.cameraReady = true;
+                S.handData = results.multiHandLandmarks && results.multiHandLandmarks.length > 0 ? results.multiHandLandmarks : null;
+                if (S.handData) processGestures(S.handData);
+            });
+        } catch(e) { console.warn('MediaPipe failed:', e); }
+
+        function startLocalCam() {
+            var video = document.getElementById('video');
+            if (mpHands) {
+                var _sk = false;
+                S.localCamera = new Camera(video, { onFrame: function() { _sk=!_sk; if(_sk) return Promise.resolve(); return mpHands.send({image:video}); }, width: 320, height: 240 });
+                S.localCamera.start().then(function() { showToast('Camera online — explore with your hand!'); }).catch(function() { showToast('No camera — use mouse'); });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════════════
+
+        function startApp() {
+            S.canvas = document.getElementById('c'); S.ctx = S.canvas.getContext('2d');
+            function resize() { S.w = window.innerWidth; S.h = window.innerHeight; S.canvas.width = S.w; S.canvas.height = S.h; }
+            window.addEventListener('resize', resize); resize();
+            initInput(); initStars();
+            document.getElementById('cam-choice').style.display = 'block';
+            document.getElementById('cc-local').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; startLocalCam(); };
+            document.getElementById('cc-skip').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; showToast('Mouse mode — click objects, drag to pan, scroll to zoom'); };
+            S.lastFpsTime = performance.now();
+            requestAnimationFrame(renderLoop);
+        }
+
+        startApp();
+    })();
+    </script>
+</body>
+</html>
