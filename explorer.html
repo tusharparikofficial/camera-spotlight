@@ -32,11 +32,43 @@
             <div class="cc-sub">Navigate worlds, grab objects, discover secrets. Move hand to look around, pinch to grab.</div>
             <div class="cc-buttons">
                 <button class="cc-btn" id="cc-local"><span class="icon">&#x1F4F7;</span>CAMERA<span class="label">Hand tracking</span></button>
+                <button class="cc-btn" id="cc-phone"><span class="icon">&#x1F4F1;</span>PAIR PHONE<span class="label">Stream from phone</span></button>
                 <button class="cc-btn" id="cc-skip"><span class="icon">&#x1F5B1;</span>MOUSE<span class="label">Click &amp; drag</span></button>
             </div>
         </div>
     </div>
 
+    <div id="pair-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(8,8,16,0.95);">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:40px;border:1px solid rgba(0,255,255,0.2);border-radius:12px;background:rgba(0,20,40,0.6);backdrop-filter:blur(20px);min-width:320px;font-family:'Courier New',Consolas,monospace;color:#00ffff;">
+            <div style="font-size:14px;letter-spacing:4px;opacity:0.7;margin-bottom:24px;">P A I R</div>
+            <div>Open: <span style="color:#ffaa00;">jarvis.tuxy.online/explorer</span></div>
+            <div style="font-size:11px;opacity:0.4;margin:12px 0;">Scan QR:</div>
+            <canvas id="qr-canvas" width="180" height="180" style="margin:0 auto 12px;display:block;border-radius:8px;"></canvas>
+            <div id="pair-code-display" style="font-size:42px;font-weight:bold;letter-spacing:10px;margin:12px 0;text-shadow:0 0 20px rgba(0,255,255,0.5);">------</div>
+            <div id="p-status" style="font-size:12px;color:rgba(0,255,255,0.6);">Generating...</div>
+            <button id="pair-cancel" style="background:transparent;border:1px solid rgba(255,60,60,0.4);color:#ff5555;padding:10px 28px;font-family:inherit;font-size:13px;cursor:pointer;border-radius:4px;letter-spacing:2px;margin-top:12px;">CANCEL</button>
+        </div>
+    </div>
+
+    <div id="mobile-ui" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(8,8,16,0.95);">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:40px;border:1px solid rgba(0,255,255,0.2);border-radius:12px;background:rgba(0,20,40,0.6);backdrop-filter:blur(20px);min-width:320px;font-family:'Courier New',Consolas,monospace;color:#00ffff;">
+            <div style="font-size:14px;letter-spacing:4px;opacity:0.7;margin-bottom:24px;">J.A.R.V.I.S. &nbsp; E X P L O R E R</div>
+            <div id="m-choice">
+                <div style="font-size:11px;opacity:0.5;margin-bottom:20px;">Choose how to play</div>
+                <button class="cc-btn" id="m-play-here" style="display:block;width:100%;margin:10px 0;padding:18px;font-size:14px;">PLAY ON THIS DEVICE</button>
+                <button class="cc-btn" id="m-pair-btn" style="display:block;width:100%;margin:10px 0;padding:18px;font-size:14px;">PAIR WITH DESKTOP</button>
+            </div>
+            <div id="m-pair-form" style="display:none;">
+                <video id="mobile-preview" autoplay playsinline muted style="width:280px;height:210px;border-radius:8px;border:1px solid rgba(0,255,255,0.2);background:#000;margin:16px auto;display:none;object-fit:cover;"></video>
+                <div style="margin:16px 0;"><input id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code" style="background:rgba(0,20,40,0.8);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:14px 20px;font-family:inherit;font-size:32px;text-align:center;letter-spacing:10px;border-radius:6px;width:240px;outline:none;"></div>
+                <button id="pair-connect" style="background:transparent;border:1px solid rgba(0,255,255,0.4);color:#00ffff;padding:10px 28px;font-family:inherit;font-size:13px;cursor:pointer;border-radius:4px;letter-spacing:2px;">C O N N E C T</button>
+                <div id="m-status" style="font-size:12px;margin:16px 0;color:rgba(0,255,255,0.6);">Enter 6-digit code</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="lib/qrcode/qrcode.min.js"></script>
+    <script src="lib/peerjs/peerjs.min.js"></script>
     <script src="lib/hands/hands.js"></script>
     <script src="lib/camera_utils/camera_utils.js"></script>
 
@@ -151,6 +183,7 @@
             mouseX: 0, mouseY: 0, mouseDown: false, dragStartX: 0, dragStartY: 0, camDragX: 0, camDragY: 0,
             // Camera feed
             cameraReady: false, localCamera: null,
+            peer: null, remoteVideo: null, usingRemoteCamera: false,
             // FPS
             fps: 0, frameCount: 0, lastFpsTime: 0,
             toast: null,
@@ -701,7 +734,7 @@
             ctx.fillStyle = '#080810'; ctx.fillRect(0, 0, w, h);
 
             // Camera feed
-            var vid = document.getElementById('video');
+            var vid = S.usingRemoteCamera ? S.remoteVideo : document.getElementById('video');
             if (vid && vid.readyState >= 2) {
                 ctx.save(); ctx.globalAlpha = 0.06;
                 ctx.translate(w, 0); ctx.scale(-1, 1);
@@ -787,6 +820,57 @@
         }
 
         // ═══════════════════════════════════════════════════════════
+        // PAIRING
+        // ═══════════════════════════════════════════════════════════
+
+        function generatePairCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
+        function drawQRCode(code) {
+            var url = window.location.origin + window.location.pathname + '?pair=' + code;
+            var qr = qrcode(0, 'M'); qr.addData(url); qr.make();
+            var cv = document.getElementById('qr-canvas'); if (!cv) return;
+            var cx = cv.getContext('2d'), sz = cv.width, mc = qr.getModuleCount(), cs = sz / mc;
+            cx.fillStyle = '#0a0a18'; cx.fillRect(0,0,sz,sz); cx.fillStyle = '#00ffff';
+            for (var r = 0; r < mc; r++) for (var c = 0; c < mc; c++) { if (qr.isDark(r,c)) cx.fillRect(c*cs,r*cs,cs+0.5,cs+0.5); }
+        }
+        function startPairing() {
+            var code = generatePairCode();
+            document.getElementById('pair-code-display').textContent = code;
+            document.getElementById('p-status').textContent = 'Waiting...';
+            document.getElementById('pair-overlay').style.display = 'block';
+            drawQRCode(code);
+            if (S.peer) S.peer.destroy();
+            S.peer = new Peer('jexp-' + code);
+            S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active...'; });
+            S.peer.on('error', function(err) { document.getElementById('p-status').textContent = 'Error: ' + err.type; });
+            S.peer.on('call', function(call) { call.answer(); call.on('stream', function(rs) { onRemoteCam(rs); document.getElementById('pair-overlay').style.display = 'none'; }); call.on('close', function() { offRemoteCam(); }); });
+        }
+        function cancelPairing() { document.getElementById('pair-overlay').style.display = 'none'; if (S.peer) { S.peer.destroy(); S.peer = null; } }
+        function onRemoteCam(stream) {
+            S.remoteVideo = document.createElement('video'); S.remoteVideo.srcObject = stream; S.remoteVideo.autoplay = true; S.remoteVideo.playsInline = true; S.remoteVideo.muted = true; S.remoteVideo.play();
+            if (S.localCamera && S.localCamera.stop) S.localCamera.stop();
+            S.usingRemoteCamera = true;
+            S.remoteVideo.onloadeddata = function() { processRemote(); };
+            showToast('Phone connected!');
+        }
+        var _rs = false;
+        function processRemote() { if (!S.usingRemoteCamera || !S.remoteVideo) return; _rs=!_rs; if(_rs){requestAnimationFrame(processRemote);return;} if(mpHands) mpHands.send({image:S.remoteVideo}).then(function(){if(S.usingRemoteCamera)requestAnimationFrame(processRemote);}); }
+        function offRemoteCam() { S.usingRemoteCamera = false; if(S.remoteVideo){S.remoteVideo.srcObject=null;S.remoteVideo=null;} startLocalCam(); showToast('Phone disconnected'); }
+        function initMobileUI() {
+            document.getElementById('mobile-ui').style.display = 'block'; document.getElementById('c').style.display = 'none';
+            var autoCode = new URLSearchParams(window.location.search).get('pair');
+            if (autoCode && autoCode.length === 6) { document.getElementById('m-choice').style.display='none'; document.getElementById('m-pair-form').style.display='block'; document.getElementById('pair-input').value=autoCode; document.getElementById('m-status').textContent='Auto-connecting...'; setTimeout(function(){connectMobile(autoCode);},800); }
+            document.getElementById('m-play-here').onclick = function(){document.getElementById('mobile-ui').style.display='none';document.getElementById('c').style.display='block';startApp();};
+            document.getElementById('m-pair-btn').onclick = function(){document.getElementById('m-choice').style.display='none';document.getElementById('m-pair-form').style.display='block';};
+            document.getElementById('pair-connect').onclick = function(){var c=document.getElementById('pair-input').value.trim();if(c.length!==6){document.getElementById('m-status').textContent='Enter 6 digits';return;}connectMobile(c);};
+            document.getElementById('pair-input').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('pair-connect').click();});
+        }
+        function connectMobile(code) {
+            var st=document.getElementById('m-status'),pv=document.getElementById('mobile-preview'); st.textContent='Connecting...';
+            var peer=new Peer(); peer.on('open',function(){navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false}).then(function(stream){pv.srcObject=stream;pv.style.display='block';var call=peer.call('jexp-'+code,stream);if(!call){st.textContent='Failed';return;}st.textContent='Streaming...';st.style.color='#00ff88';var btn=document.getElementById('pair-connect');btn.textContent='DISCONNECT';btn.style.color='#ff5555';btn.onclick=function(){call.close();stream.getTracks().forEach(function(t){t.stop();});pv.srcObject=null;pv.style.display='none';st.textContent='Disconnected';st.style.color='';btn.textContent='CONNECT';btn.style.color='';btn.onclick=function(){var c=document.getElementById('pair-input').value.trim();if(c.length===6)connectMobile(c);};peer.destroy();};}).catch(function(err){st.textContent='Camera: '+err.message;});});
+            peer.on('error',function(err){st.textContent='Failed: '+err.type;});
+        }
+
+        // ═══════════════════════════════════════════════════════════
         // INIT
         // ═══════════════════════════════════════════════════════════
 
@@ -797,12 +881,19 @@
             initInput(); initStars();
             document.getElementById('cam-choice').style.display = 'block';
             document.getElementById('cc-local').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; startLocalCam(); };
+            document.getElementById('cc-phone').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; startPairing(); };
             document.getElementById('cc-skip').onclick = function() { document.getElementById('cam-choice').style.display = 'none'; showToast('Mouse mode — click objects, drag to pan, scroll to zoom'); };
+            document.getElementById('pair-cancel').onclick = cancelPairing;
             S.lastFpsTime = performance.now();
             requestAnimationFrame(renderLoop);
         }
 
-        startApp();
+        function init() {
+            var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+            if (isMobile) { initMobileUI(); return; }
+            startApp();
+        }
+        init();
     })();
     </script>
 </body>
