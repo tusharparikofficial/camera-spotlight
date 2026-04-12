@@ -186,9 +186,13 @@
             </div>
             <div id="m-pair-form" style="display:none;">
                 <div style="margin:12px 0;font-size:11px;opacity:0.5;">Choose what to share:</div>
-                <div class="row" style="justify-content:center;margin-bottom:12px;">
+                <div class="row" style="justify-content:center;margin-bottom:8px;">
                     <button class="btn" id="m-share-cam" style="flex:0;">&#x1F4F7; Camera</button>
                     <button class="btn" id="m-share-screen" style="flex:0;">&#x1F5A5; Screen</button>
+                </div>
+                <div class="row" style="justify-content:center;margin-bottom:12px;">
+                    <button class="btn" id="m-cam-front" style="flex:0;font-size:11px;">&#x1F933; Front</button>
+                    <button class="btn" id="m-cam-back" style="flex:0;font-size:11px;">&#x1F4F8; Back</button>
                 </div>
                 <video id="mobile-preview" autoplay playsinline muted style="width:260px;height:195px;border-radius:8px;border:1px solid rgba(0,255,255,0.2);background:#000;margin:10px auto;display:none;object-fit:cover;"></video>
                 <div style="margin:12px 0;"><input id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code" style="background:rgba(0,20,40,0.8);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:12px 16px;font-family:inherit;font-size:28px;text-align:center;letter-spacing:8px;border-radius:6px;width:220px;outline:none;"></div>
@@ -263,6 +267,10 @@
             templateLoaded: null,
             // Quiz mode
             quizActive: false, quizQuestion: '', quizTimer: 0, quizTimerStart: 0, quizRevealed: false,
+            // Draggable components (normalized 0-1 positions + size)
+            contentBox: { x: 0.62, y: 0.55, w: 0.35, h: 0 }, // auto height from aspect
+            camPipBox: { x: 0.78, y: 0.02, w: 0.2, h: 0.2 },
+            dragging: null, dragOffX: 0, dragOffY: 0, resizing: null,
             // Pairing
             peer: null, pairCode: null,
             // Stars (for space bg)
@@ -275,6 +283,7 @@
             active: false,
             isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
             mobileShareMode: 'camera', // 'camera' or 'screen'
+            mobileFacing: 'user', // 'user' (front) or 'environment' (back)
         };
 
         // ═══════════════════════════════════════════════════════════
@@ -477,6 +486,9 @@
             };
             document.getElementById('m-share-cam').onclick = function() { S.mobileShareMode = 'camera'; this.classList.add('active'); document.getElementById('m-share-screen').classList.remove('active'); };
             document.getElementById('m-share-screen').onclick = function() { S.mobileShareMode = 'screen'; this.classList.add('active'); document.getElementById('m-share-cam').classList.remove('active'); };
+            document.getElementById('m-cam-front').onclick = function() { S.mobileFacing = 'user'; this.classList.add('active'); document.getElementById('m-cam-back').classList.remove('active'); };
+            document.getElementById('m-cam-back').onclick = function() { S.mobileFacing = 'environment'; this.classList.add('active'); document.getElementById('m-cam-front').classList.remove('active'); };
+            document.getElementById('m-cam-front').classList.add('active');
             document.getElementById('pair-connect').onclick = function() {
                 var code = document.getElementById('pair-input').value.trim();
                 if (code.length !== 6) { document.getElementById('m-status').textContent = 'Enter 6 digits'; return; }
@@ -493,7 +505,7 @@
             if (S.mobileShareMode === 'screen' && navigator.mediaDevices.getDisplayMedia) {
                 navigator.mediaDevices.getDisplayMedia({ video: true }).then(gotStream).catch(function(e) { st.textContent = 'Screen share failed'; });
             } else {
-                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: {ideal:1280}, height: {ideal:720} }, audio: false }).then(gotStream).catch(function(e) { st.textContent = 'Camera failed: ' + e.message; });
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: S.mobileFacing, width: {ideal:1280}, height: {ideal:720} }, audio: false }).then(gotStream).catch(function(e) { st.textContent = 'Camera failed: ' + e.message; });
             }
             function gotStream(stream) {
                 pv.srcObject = stream; pv.style.display = 'block';
@@ -616,63 +628,81 @@
         // CONTENT DRAWING (iPad / Screen share)
         // ═══════════════════════════════════════════════════════════
 
-        function drawContent(ctx, w, h) {
-            if (!S.hasContent || !S.contentVideo || S.contentVideo.readyState < 2) return;
-            var vid = S.contentVideo;
-            var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
+        // Draggable video panels - returns {x,y,w,h} in pixels from box (normalized)
+        function boxToPixels(box, w, h, vidAspect) {
+            var pw = box.w * w;
+            var ph = vidAspect ? pw / vidAspect : box.h * h;
+            return { x: box.x * w, y: box.y * h, w: pw, h: ph };
+        }
 
-            switch (S.layout) {
-                case 'presenter': {
-                    // Content as floating window bottom-right
-                    var cw = w * 0.35, ch = cw * (vh / vw);
-                    var cx = w - cw - 20, cy = h - ch - 70;
-                    ctx.save();
-                    ctx.shadowColor = 'rgba(0,255,255,0.3)'; ctx.shadowBlur = 20;
-                    ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 2;
-                    ctx.strokeRect(cx - 1, cy - 1, cw + 2, ch + 2);
-                    ctx.shadowBlur = 0;
-                    ctx.drawImage(vid, cx, cy, cw, ch);
-                    ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.4)'; ctx.textAlign = 'right';
-                    ctx.fillText('CONTENT', cx + cw - 4, cy - 4);
-                    ctx.restore();
-                    break;
-                }
-                case 'split': {
-                    // Left half: camera, Right half: content
-                    var cw = w / 2 - 4;
-                    var ch2 = cw * (vh / vw);
-                    var cy = (h - ch2) / 2;
-                    ctx.drawImage(vid, w / 2 + 2, cy, cw, ch2);
-                    ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 1;
-                    ctx.beginPath(); ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h); ctx.stroke();
-                    break;
-                }
-                case 'pip': {
-                    // Content fills most of screen, camera is PiP
+        function drawVideoPanel(ctx, vid, box, w, h, label, mirror) {
+            var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
+            var p = boxToPixels(box, w, h, vw / vh);
+
+            ctx.save();
+            // Shadow
+            ctx.shadowColor = 'rgba(0,255,255,0.2)'; ctx.shadowBlur = 15;
+            ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 2;
+            ctx.strokeRect(p.x, p.y, p.w, p.h);
+            ctx.shadowBlur = 0;
+
+            // Draw video (optionally mirrored)
+            if (mirror) {
+                ctx.save(); ctx.translate(p.x + p.w, p.y); ctx.scale(-1, 1);
+                ctx.drawImage(vid, 0, 0, p.w, p.h);
+                ctx.restore();
+            } else {
+                ctx.drawImage(vid, p.x, p.y, p.w, p.h);
+            }
+
+            // Label
+            if (label) {
+                ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.4)'; ctx.textAlign = 'right';
+                ctx.fillText(label, p.x + p.w - 4, p.y - 4);
+            }
+
+            // Resize handle (bottom-right corner)
+            ctx.fillStyle = 'rgba(0,255,255,0.3)';
+            ctx.fillRect(p.x + p.w - 10, p.y + p.h - 10, 10, 10);
+
+            ctx.restore();
+            return p; // return pixel rect for hit testing
+        }
+
+        var contentPixelRect = null, camPipPixelRect = null;
+
+        function drawContent(ctx, w, h) {
+            contentPixelRect = null; camPipPixelRect = null;
+
+            // Content panel
+            if (S.hasContent && S.contentVideo && S.contentVideo.readyState >= 2) {
+                if (S.layout === 'pip') {
+                    // Content fills most of screen
+                    var vid = S.contentVideo;
+                    var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
                     var scale = Math.min(w / vw, h / vh) * 0.9;
                     var dw = vw * scale, dh = vh * scale;
                     ctx.drawImage(vid, (w - dw) / 2, (h - dh) / 2, dw, dh);
-                    // Camera PiP
-                    if (S.hasLocalCam && S.localVideo && S.localVideo.readyState >= 2) {
-                        var pw = 200, ph = 150;
-                        ctx.save();
-                        ctx.translate(w - 12, 12 + ph); ctx.scale(-1, 1);
-                        ctx.drawImage(S.localVideo, 0, 0, pw, ph);
-                        ctx.restore();
-                        ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 1;
-                        ctx.strokeRect(w - pw - 12, 12, pw, ph);
-                    }
-                    break;
-                }
-                case 'board': {
-                    // Small content reference in corner
-                    var cw2 = 200, ch3 = cw2 * (vh / vw);
-                    ctx.drawImage(vid, 12, 50, cw2, ch3);
-                    ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 1;
-                    ctx.strokeRect(12, 50, cw2, ch3);
-                    break;
+                } else {
+                    contentPixelRect = drawVideoPanel(ctx, S.contentVideo, S.contentBox, w, h, 'CONTENT', false);
                 }
             }
+
+            // Camera PiP (when layout is pip, or always as option)
+            if (S.layout === 'pip' && S.hasLocalCam && S.localVideo && S.localVideo.readyState >= 2 && !S.bgRemoval) {
+                camPipPixelRect = drawVideoPanel(ctx, S.localVideo, S.camPipBox, w, h, 'CAMERA', true);
+            }
+        }
+
+        // Hit test for draggable panels
+        function hitTestPanel(x, y, pixelRect) {
+            if (!pixelRect) return null;
+            var p = pixelRect;
+            // Resize handle
+            if (x > p.x + p.w - 14 && y > p.y + p.h - 14 && x < p.x + p.w + 4 && y < p.y + p.h + 4) return 'resize';
+            // Body
+            if (x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h) return 'drag';
+            return null;
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -861,6 +891,19 @@
             var c = S.wbCanvas;
             c.addEventListener('mousedown', function(e) {
                 var x = e.clientX, y = e.clientY;
+
+                // Check if clicking a draggable panel
+                var cHit = hitTestPanel(x, y, contentPixelRect);
+                if (cHit) {
+                    if (cHit === 'resize') { S.resizing = 'content'; } else { S.dragging = 'content'; S.dragOffX = x / S.w - S.contentBox.x; S.dragOffY = y / S.h - S.contentBox.y; }
+                    return;
+                }
+                var pHit = hitTestPanel(x, y, camPipPixelRect);
+                if (pHit) {
+                    if (pHit === 'resize') { S.resizing = 'camPip'; } else { S.dragging = 'camPip'; S.dragOffX = x / S.w - S.camPipBox.x; S.dragOffY = y / S.h - S.camPipBox.y; }
+                    return;
+                }
+
                 if (S.wbTool === 'pointer') { S.pointerActive = true; S.pointerX = x; S.pointerY = y; return; }
                 if (S.wbTool === 'text') { placeText(x, y); return; }
                 if (S.wbTool === 'stamp') { placeStamp(x, y); return; }
@@ -874,6 +917,27 @@
             });
             c.addEventListener('mousemove', function(e) {
                 var x = e.clientX, y = e.clientY;
+
+                // Panel dragging/resizing
+                if (S.dragging) {
+                    var box = S.dragging === 'content' ? S.contentBox : S.camPipBox;
+                    box.x = Math.max(0, Math.min(1 - box.w, x / S.w - S.dragOffX));
+                    box.y = Math.max(0, Math.min(0.9, y / S.h - S.dragOffY));
+                    return;
+                }
+                if (S.resizing) {
+                    var box = S.resizing === 'content' ? S.contentBox : S.camPipBox;
+                    box.w = Math.max(0.1, Math.min(0.8, x / S.w - box.x));
+                    return;
+                }
+
+                // Change cursor if hovering panel edge
+                var cHit = hitTestPanel(x, y, contentPixelRect);
+                var pHit = hitTestPanel(x, y, camPipPixelRect);
+                if ((cHit === 'resize' || pHit === 'resize')) c.style.cursor = 'nwse-resize';
+                else if (cHit === 'drag' || pHit === 'drag') c.style.cursor = 'move';
+                else c.style.cursor = S.wbTool === 'pointer' ? 'default' : 'crosshair';
+
                 if (S.wbTool === 'pointer') { S.pointerX = x; S.pointerY = y; return; }
                 if (!S.wbDrawing) return;
                 if (S.shapeType && S.shapeStart) {
@@ -900,6 +964,7 @@
                 }
             });
             c.addEventListener('mouseup', function(e) {
+                if (S.dragging || S.resizing) { S.dragging = null; S.resizing = null; return; }
                 if (S.wbTool === 'pointer') { S.pointerActive = false; return; }
                 if (S.shapeType && S.shapeStart && S.shapePreview) {
                     drawShapeOnCtx(S.wbCtx, S.shapeType, S.shapeStart.x, S.shapeStart.y, S.shapePreview.x, S.shapePreview.y, S.wbColor, S.wbSize);
@@ -1072,37 +1137,42 @@
         function initBGRemoval() {
             try {
                 S.segmentation = new SelfieSegmentation({ locateFile: function(f) { return 'lib/selfie_seg/' + f; } });
-                S.segmentation.setOptions({ modelSelection: 1 }); // landscape model
+                S.segmentation.setOptions({ modelSelection: 1 });
                 S.segmentation.onResults(function(results) {
                     S.segMask = results.segmentationMask;
+                    // Immediately composite the person
+                    if (S.localVideo && S.localVideo.readyState >= 2) {
+                        var vid = S.localVideo;
+                        var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
+                        if (!S.segCanvas) { S.segCanvas = document.createElement('canvas'); S.segCtx = S.segCanvas.getContext('2d'); }
+                        S.segCanvas.width = vw; S.segCanvas.height = vh;
+                        var sc = S.segCtx;
+                        // Draw video frame first
+                        sc.clearRect(0, 0, vw, vh);
+                        sc.save(); sc.translate(vw, 0); sc.scale(-1, 1);
+                        sc.drawImage(vid, 0, 0, vw, vh);
+                        sc.restore();
+                        // Use mask to cut out background (keep person)
+                        sc.globalCompositeOperation = 'destination-in';
+                        sc.drawImage(results.segmentationMask, 0, 0, vw, vh);
+                        sc.globalCompositeOperation = 'source-over';
+                    }
                 });
-                S.segCanvas = document.createElement('canvas');
-                S.segCtx = S.segCanvas.getContext('2d');
             } catch(e) { console.warn('Selfie seg failed:', e); S.bgRemoval = false; }
         }
 
         function processSegFrame() {
             if (!S.bgRemoval || !S.segmentation || !S.localVideo || S.localVideo.readyState < 2) return;
             S.segmentation.send({ image: S.localVideo }).then(function() {
-                if (S.bgRemoval) setTimeout(processSegFrame, 100); // ~10fps for segmentation
+                if (S.bgRemoval) setTimeout(processSegFrame, 80);
+            }).catch(function() {
+                if (S.bgRemoval) setTimeout(processSegFrame, 500);
             });
         }
 
         function drawBGRemoved(ctx, w, h) {
-            if (!S.segMask || !S.localVideo || S.localVideo.readyState < 2) return;
-            var vid = S.localVideo;
-            var vw = vid.videoWidth, vh = vid.videoHeight;
-            S.segCanvas.width = vw; S.segCanvas.height = vh;
-            var sc = S.segCtx;
-            // Draw the mask
-            sc.drawImage(S.segMask, 0, 0, vw, vh);
-            // Use mask as alpha for the video
-            sc.globalCompositeOperation = 'source-in';
-            sc.save(); sc.translate(vw, 0); sc.scale(-1, 1); // mirror
-            sc.drawImage(vid, 0, 0, vw, vh);
-            sc.restore();
-            sc.globalCompositeOperation = 'source-over';
-            // Draw composited person onto the main canvas
+            if (!S.segCanvas || S.segCanvas.width === 0) return;
+            var vw = S.segCanvas.width, vh = S.segCanvas.height;
             var scale = Math.max(w / vw, h / vh);
             var dw = vw * scale, dh = vh * scale;
             ctx.drawImage(S.segCanvas, (w - dw) / 2, (h - dh) / 2, dw, dh);
