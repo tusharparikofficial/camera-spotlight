@@ -121,7 +121,7 @@
 
         <div class="ctrl-title">EFFECTS</div>
         <div class="ctrl-row">
-            <button class="ctrl-btn fx-btn" data-fx="none">None</button>
+            <button class="ctrl-btn fx-btn active" data-fx="none">None</button>
             <button class="ctrl-btn fx-btn" data-fx="vignette">Vignette</button>
             <button class="ctrl-btn fx-btn" data-fx="film">Film</button>
         </div>
@@ -130,12 +130,20 @@
             <button class="ctrl-btn fx-btn" data-fx="warm">Warm</button>
             <button class="ctrl-btn fx-btn" data-fx="bw">B&W</button>
         </div>
+        <div class="ctrl-row">
+            <button class="ctrl-btn fx-btn" data-fx="cyberpunk">Cyber</button>
+            <button class="ctrl-btn fx-btn" data-fx="vintage">Vintage</button>
+            <button class="ctrl-btn fx-btn" data-fx="glow">Glow</button>
+        </div>
 
         <div class="ctrl-title">FRAME</div>
         <div class="ctrl-row">
-            <button class="ctrl-btn frame-btn" data-frame="none">None</button>
+            <button class="ctrl-btn frame-btn active" data-frame="none">None</button>
             <button class="ctrl-btn frame-btn" data-frame="circle">Circle</button>
             <button class="ctrl-btn frame-btn" data-frame="rounded">Rounded</button>
+        </div>
+        <div class="ctrl-row">
+            <button class="ctrl-btn frame-btn" data-frame="cinematic">Cinema</button>
             <button class="ctrl-btn frame-btn" data-frame="hud">HUD</button>
         </div>
 
@@ -168,7 +176,6 @@
             // Segmentation
             seg: null, segMask: null,
             segCanvas: null, segCtx: null,
-            personCanvas: null, personCtx: null,
             // Settings
             bgMode: 'none', // none, blur, remove, space, gradient, classroom
             blurAmount: 12,
@@ -194,49 +201,53 @@
         function rand(a,b){return a+Math.random()*(b-a);}
 
         // ═══════════════════════════════════════════════════════════
-        // SEGMENTATION
+        // SEGMENTATION (stores mask only - compositing happens in render)
         // ═══════════════════════════════════════════════════════════
 
         function initSeg() {
             try {
                 S.seg = new SelfieSegmentation({ locateFile: function(f) { return 'lib/selfie_seg/' + f; } });
                 S.seg.setOptions({ modelSelection: 1 });
-                S.seg.onResults(onSegResults);
-                S.personCanvas = document.createElement('canvas');
-                S.personCtx = S.personCanvas.getContext('2d');
+                S.seg.onResults(function(results) {
+                    // Store the mask canvas - DON'T composite here (that freezes person)
+                    // The mask is a canvas element we can reuse directly
+                    S.segMask = results.segmentationMask;
+                });
+                // Temp canvas for compositing in render loop
                 S.segCanvas = document.createElement('canvas');
                 S.segCtx = S.segCanvas.getContext('2d');
             } catch(e) { console.warn('Seg init failed:', e); }
         }
 
-        function onSegResults(results) {
-            S.segMask = results.segmentationMask;
-            var vid = getActiveVideo();
-            if (!vid || vid.readyState < 2) return;
-            var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
-
-            // Build person-only image
-            S.personCanvas.width = vw; S.personCanvas.height = vh;
-            var pc = S.personCtx;
-            pc.clearRect(0, 0, vw, vh);
-            pc.drawImage(vid, 0, 0, vw, vh);
-            pc.globalCompositeOperation = 'destination-in';
-            pc.drawImage(results.segmentationMask, 0, 0, vw, vh);
-            pc.globalCompositeOperation = 'source-over';
-        }
-
-        var _segSkip = false;
         function processSegLoop() {
-            if (S.bgMode === 'none' && S.bgMode !== 'blur') { setTimeout(processSegLoop, 200); return; }
+            // Only run segmentation when bg mode needs it
+            if (S.bgMode === 'none') { setTimeout(processSegLoop, 300); return; }
             var vid = getActiveVideo();
             if (!vid || vid.readyState < 2) { setTimeout(processSegLoop, 200); return; }
-            _segSkip = !_segSkip;
-            if (_segSkip) { requestAnimationFrame(processSegLoop); return; }
             if (S.seg) {
                 S.seg.send({ image: vid }).then(function() {
-                    requestAnimationFrame(processSegLoop);
-                }).catch(function() { setTimeout(processSegLoop, 300); });
+                    // Run again - seg model naturally throttles itself
+                    if (S.active) requestAnimationFrame(processSegLoop);
+                }).catch(function() { if (S.active) setTimeout(processSegLoop, 500); });
             }
+        }
+
+        // Composite LIVE video clipped to person mask (called every render frame)
+        function drawPersonFromLiveVideo(ctx, vid, dx, dy, dw, dh, mirror) {
+            if (!S.segMask) return;
+            var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
+            S.segCanvas.width = dw; S.segCanvas.height = dh;
+            var sc = S.segCtx;
+            sc.clearRect(0, 0, dw, dh);
+            // Draw LIVE video (not stale person canvas)
+            if (mirror) { sc.save(); sc.translate(dw, 0); sc.scale(-1, 1); sc.drawImage(vid, 0, 0, dw, dh); sc.restore(); }
+            else { sc.drawImage(vid, 0, 0, dw, dh); }
+            // Apply mask to cut out background (keep person)
+            sc.globalCompositeOperation = 'destination-in';
+            sc.drawImage(S.segMask, 0, 0, dw, dh);
+            sc.globalCompositeOperation = 'source-over';
+            // Draw composited result
+            ctx.drawImage(S.segCanvas, dx, dy);
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -406,76 +417,134 @@
             if (!vid || vid.readyState < 2) { ctx.fillStyle = '#080810'; ctx.fillRect(0,0,w,h); requestAnimationFrame(renderLoop); return; }
             var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
 
-            // Clear
             ctx.fillStyle = '#080810'; ctx.fillRect(0,0,w,h);
 
-            // Fit video to canvas
             var scale = Math.min(w / vw, h / vh);
             var dw = vw * scale, dh = vh * scale;
             var dx = (w - dw) / 2, dy = (h - dh) / 2;
 
-            // Apply CSS filters via canvas filter
-            var filterStr = 'brightness(' + (S.brightness / 100) + ') contrast(' + (S.contrast / 100) + ') saturate(' + (S.saturation / 100) + ')';
-            if (S.fxMode === 'bw') filterStr += ' grayscale(1)';
-            if (S.fxMode === 'cool') filterStr += ' hue-rotate(-15deg)';
-            if (S.fxMode === 'warm') filterStr += ' hue-rotate(15deg) saturate(1.2)';
-            if (S.fxMode === 'film') filterStr += ' sepia(0.3) contrast(1.1)';
+            // Color grading filter string
+            var gradeFilter = 'brightness(' + (S.brightness / 100) + ') contrast(' + (S.contrast / 100) + ') saturate(' + (S.saturation / 100) + ')';
 
+            // ── DRAW BASED ON BG MODE ──
             ctx.save();
-            ctx.filter = filterStr;
 
             if (S.bgMode === 'none') {
-                // Just draw raw video
+                // Raw video with grading
+                ctx.filter = gradeFilter;
                 if (S.mirror) { ctx.translate(dx + dw, dy); ctx.scale(-1, 1); ctx.drawImage(vid, 0, 0, dw, dh); }
                 else { ctx.drawImage(vid, dx, dy, dw, dh); }
+
             } else if (S.bgMode === 'blur') {
-                // Draw blurred BG + sharp person
-                ctx.filter = filterStr + ' blur(' + S.blurAmount + 'px)';
+                // Step 1: Draw blurred background (LIVE video, blurred)
+                ctx.filter = gradeFilter + ' blur(' + S.blurAmount + 'px)';
                 if (S.mirror) { ctx.save(); ctx.translate(dx + dw, dy); ctx.scale(-1, 1); ctx.drawImage(vid, 0, 0, dw, dh); ctx.restore(); }
                 else { ctx.drawImage(vid, dx, dy, dw, dh); }
-                // Sharp person on top
-                if (S.personCanvas && S.personCanvas.width > 0) {
-                    ctx.filter = filterStr;
-                    if (S.mirror) { ctx.save(); ctx.translate(dx + dw, dy); ctx.scale(-1, 1); ctx.drawImage(S.personCanvas, 0, 0, dw, dh); ctx.restore(); }
-                    else { ctx.drawImage(S.personCanvas, dx, dy, dw, dh); }
-                }
+                // Step 2: Draw LIVE video clipped to person mask (sharp, on top)
+                ctx.filter = gradeFilter;
+                if (S.segMask) drawPersonFromLiveVideo(ctx, vid, dx, dy, dw, dh, S.mirror);
+
             } else {
-                // Virtual BG + person overlay
+                // Virtual BG modes: draw BG first, then LIVE person on top
                 ctx.filter = 'none';
                 drawVirtualBG(ctx, w, h, ts);
-                ctx.filter = filterStr;
-                if (S.personCanvas && S.personCanvas.width > 0) {
-                    if (S.mirror) { ctx.save(); ctx.translate(dx + dw, dy); ctx.scale(-1, 1); ctx.drawImage(S.personCanvas, 0, 0, dw, dh); ctx.restore(); }
-                    else { ctx.drawImage(S.personCanvas, dx, dy, dw, dh); }
-                }
+                ctx.filter = gradeFilter;
+                if (S.segMask) drawPersonFromLiveVideo(ctx, vid, dx, dy, dw, dh, S.mirror);
             }
 
             ctx.filter = 'none';
             ctx.restore();
 
-            // Warmth overlay
+            // ── COLOR EFFECTS ──
+
+            // Warmth tint
             if (S.warmth !== 0) {
-                ctx.globalAlpha = Math.abs(S.warmth) / 200;
-                ctx.fillStyle = S.warmth > 0 ? 'rgba(255,150,50,0.15)' : 'rgba(50,100,255,0.15)';
+                ctx.globalAlpha = Math.abs(S.warmth) / 150;
+                ctx.fillStyle = S.warmth > 0 ? 'rgba(255,140,40,0.12)' : 'rgba(40,80,255,0.1)';
                 ctx.fillRect(dx, dy, dw, dh);
                 ctx.globalAlpha = 1;
             }
 
-            // Effects
-            if (S.fxMode === 'vignette') {
-                var vg = ctx.createRadialGradient(w/2, h/2, Math.min(w,h) * 0.25, w/2, h/2, Math.max(w,h) * 0.7);
-                vg.addColorStop(0, 'transparent'); vg.addColorStop(1, 'rgba(0,0,0,0.6)');
-                ctx.fillStyle = vg; ctx.fillRect(0,0,w,h);
+            // FX overlays
+            switch (S.fxMode) {
+                case 'vignette': {
+                    var vg = ctx.createRadialGradient(w/2, h/2, Math.min(dw,dh) * 0.3, w/2, h/2, Math.max(dw,dh) * 0.65);
+                    vg.addColorStop(0, 'transparent'); vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+                    ctx.fillStyle = vg; ctx.fillRect(0,0,w,h);
+                    break;
+                }
+                case 'film': {
+                    // Sepia tint + vignette + grain
+                    ctx.fillStyle = 'rgba(180,140,80,0.06)'; ctx.fillRect(dx,dy,dw,dh);
+                    var vg = ctx.createRadialGradient(w/2,h/2,Math.min(dw,dh)*0.3,w/2,h/2,Math.max(dw,dh)*0.6);
+                    vg.addColorStop(0,'transparent'); vg.addColorStop(1,'rgba(0,0,0,0.4)');
+                    ctx.fillStyle = vg; ctx.fillRect(0,0,w,h);
+                    // Film grain
+                    ctx.globalAlpha = 0.04;
+                    for (var gi = 0; gi < 800; gi++) {
+                        var gx = dx + Math.random() * dw, gy = dy + Math.random() * dh;
+                        ctx.fillStyle = Math.random() > 0.5 ? '#fff' : '#000';
+                        ctx.fillRect(gx, gy, 1, 1);
+                    }
+                    ctx.globalAlpha = 1;
+                    break;
+                }
+                case 'cool': {
+                    ctx.fillStyle = 'rgba(30,60,180,0.06)'; ctx.fillRect(dx,dy,dw,dh);
+                    break;
+                }
+                case 'warm': {
+                    ctx.fillStyle = 'rgba(200,120,40,0.06)'; ctx.fillRect(dx,dy,dw,dh);
+                    break;
+                }
+                case 'bw': {
+                    // Already grayscaled via filter, add slight grain
+                    ctx.globalAlpha = 0.03;
+                    for (var gi = 0; gi < 500; gi++) {
+                        ctx.fillStyle = Math.random() > 0.5 ? '#fff' : '#000';
+                        ctx.fillRect(dx + Math.random() * dw, dy + Math.random() * dh, 1, 1);
+                    }
+                    ctx.globalAlpha = 1;
+                    break;
+                }
+                case 'cyberpunk': {
+                    // Magenta + cyan split toning
+                    ctx.globalAlpha = 0.04;
+                    ctx.fillStyle = 'rgba(255,0,100,0.1)'; ctx.fillRect(dx, dy, dw / 2, dh);
+                    ctx.fillStyle = 'rgba(0,200,255,0.08)'; ctx.fillRect(dx + dw / 2, dy, dw / 2, dh);
+                    ctx.globalAlpha = 1;
+                    var vg = ctx.createRadialGradient(w/2,h/2,Math.min(dw,dh)*0.25,w/2,h/2,Math.max(dw,dh)*0.6);
+                    vg.addColorStop(0,'transparent'); vg.addColorStop(1,'rgba(0,0,0,0.5)');
+                    ctx.fillStyle = vg; ctx.fillRect(0,0,w,h);
+                    break;
+                }
+                case 'vintage': {
+                    ctx.fillStyle = 'rgba(200,170,100,0.08)'; ctx.fillRect(dx,dy,dw,dh);
+                    ctx.fillStyle = 'rgba(0,0,30,0.04)'; ctx.fillRect(dx,dy,dw,dh);
+                    var vg = ctx.createRadialGradient(w/2,h/2,Math.min(dw,dh)*0.3,w/2,h/2,Math.max(dw,dh)*0.65);
+                    vg.addColorStop(0,'transparent'); vg.addColorStop(1,'rgba(30,10,0,0.5)');
+                    ctx.fillStyle = vg; ctx.fillRect(0,0,w,h);
+                    break;
+                }
+                case 'glow': {
+                    // Soft bloom/glow
+                    ctx.globalAlpha = 0.15;
+                    ctx.filter = 'blur(20px) brightness(1.5)';
+                    ctx.drawImage(S.canvas, 0, 0);
+                    ctx.filter = 'none';
+                    ctx.globalAlpha = 1;
+                    break;
+                }
             }
 
-            // Frame
+            // ── FRAME ──
             switch (S.frameMode) {
                 case 'circle':
                     ctx.save(); ctx.globalCompositeOperation = 'destination-in';
-                    ctx.beginPath(); ctx.arc(w/2, h/2, Math.min(dw, dh) * 0.45, 0, TAU); ctx.fill();
+                    ctx.beginPath(); ctx.arc(w/2, h/2, Math.min(dw,dh) * 0.45, 0, TAU); ctx.fill();
                     ctx.globalCompositeOperation = 'source-over';
                     ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 3;
-                    ctx.beginPath(); ctx.arc(w/2, h/2, Math.min(dw, dh) * 0.45, 0, TAU); ctx.stroke();
+                    ctx.beginPath(); ctx.arc(w/2, h/2, Math.min(dw,dh) * 0.45, 0, TAU); ctx.stroke();
                     ctx.restore();
                     break;
                 case 'rounded':
@@ -488,9 +557,15 @@
                     ctx.lineTo(dx,dy+rr); ctx.arcTo(dx,dy,dx+rr,dy,rr);
                     ctx.fill();
                     ctx.globalCompositeOperation = 'source-over';
-                    ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 2;
-                    ctx.stroke();
+                    ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 2; ctx.stroke();
                     ctx.restore();
+                    break;
+                case 'cinematic':
+                    // Letterbox bars
+                    var barH = dh * 0.1;
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(dx, dy, dw, barH);
+                    ctx.fillRect(dx, dy + dh - barH, dw, barH);
                     break;
                 case 'hud':
                     var s = 30, o = 8;
@@ -499,13 +574,15 @@
                     ctx.beginPath(); ctx.moveTo(dx+dw-o-s,dy+o); ctx.lineTo(dx+dw-o,dy+o); ctx.lineTo(dx+dw-o,dy+o+s); ctx.stroke();
                     ctx.beginPath(); ctx.moveTo(dx+o,dy+dh-o-s); ctx.lineTo(dx+o,dy+dh-o); ctx.lineTo(dx+o+s,dy+dh-o); ctx.stroke();
                     ctx.beginPath(); ctx.moveTo(dx+dw-o-s,dy+dh-o); ctx.lineTo(dx+dw-o,dy+dh-o); ctx.lineTo(dx+dw-o,dy+dh-o-s); ctx.stroke();
-                    // Data
+                    // Rotating arcs
+                    ctx.strokeStyle = 'rgba(0,255,255,0.06)'; ctx.lineWidth = 1;
+                    var t = ts * 0.0004;
+                    for (var ai = 0; ai < 3; ai++) { ctx.beginPath(); ctx.arc(w/2,h/2,Math.min(dw,dh)*0.35+ai*20,t+ai,t+ai+PI/5); ctx.stroke(); }
+                    // Data readout
                     ctx.font = '9px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.3)'; ctx.textAlign = 'left';
                     ctx.fillText('FPS: ' + S.fps + '  BG: ' + S.bgMode.toUpperCase() + '  FX: ' + S.fxMode.toUpperCase(), dx + 14, dy + dh - 14);
-                    // Scan line
                     var sy = ((ts % 4000) / 4000) * dh;
-                    ctx.strokeStyle = 'rgba(0,255,255,0.06)'; ctx.lineWidth = 1;
-                    ctx.beginPath(); ctx.moveTo(dx, dy + sy); ctx.lineTo(dx + dw, dy + sy); ctx.stroke();
+                    ctx.strokeStyle = 'rgba(0,255,255,0.05)'; ctx.beginPath(); ctx.moveTo(dx, dy+sy); ctx.lineTo(dx+dw, dy+sy); ctx.stroke();
                     break;
             }
 
