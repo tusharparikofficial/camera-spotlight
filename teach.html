@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS | Teach Studio</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #080810; }
+        body { font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
+        #localVideo, #remoteVid { display: none; }
+        canvas { display: block; position: fixed; top: 0; left: 0; }
+        #bg-canvas { z-index: 0; }
+        #wb-canvas { z-index: 1; cursor: crosshair; }
+
+        /* Setup overlay */
+        #setup { display: block; position: fixed; inset: 0; z-index: 100; background: rgba(8,8,16,0.98); overflow-y: auto; }
+        .setup-inner { max-width: 600px; margin: 40px auto; padding: 20px; }
+        .setup-title { text-align: center; font-size: 18px; letter-spacing: 6px; margin-bottom: 8px; text-shadow: 0 0 30px rgba(0,255,255,0.3); }
+        .setup-sub { text-align: center; font-size: 11px; opacity: 0.4; letter-spacing: 3px; margin-bottom: 30px; }
+        .section { margin-bottom: 24px; padding: 20px; border: 1px solid rgba(0,255,255,0.12); border-radius: 10px; background: rgba(0,15,30,0.5); }
+        .section-title { font-size: 12px; letter-spacing: 2px; opacity: 0.6; margin-bottom: 14px; }
+        .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+        .btn { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.25); color: #00ffff; padding: 12px 18px; font-family: inherit; font-size: 12px; cursor: pointer; border-radius: 6px; transition: all 0.2s; flex: 1; min-width: 120px; text-align: center; }
+        .btn:hover { border-color: #00ffff; background: rgba(0,40,80,0.5); }
+        .btn.active { border-color: #00ff88; color: #00ff88; background: rgba(0,40,20,0.4); }
+        .btn.primary { border-color: #ffaa00; color: #ffaa00; font-size: 14px; padding: 16px; }
+        .btn.primary:hover { background: rgba(60,40,0,0.4); }
+        .btn .icon { font-size: 20px; display: block; margin-bottom: 4px; }
+        .status { font-size: 10px; opacity: 0.4; margin-top: 6px; }
+        .status.on { color: #00ff88; opacity: 0.8; }
+
+        /* Pair overlay */
+        #pair-overlay { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(8,8,16,0.95); }
+        .p-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); min-width: 340px; }
+
+        /* Toolbar */
+        #toolbar { display: none; position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 6px; padding: 8px 14px; border-radius: 12px; background: rgba(0,10,20,0.85); border: 1px solid rgba(0,255,255,0.15); backdrop-filter: blur(10px); }
+        #toolbar.show { display: flex; }
+        .tool { width: 40px; height: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 8px; background: transparent; color: #00ffff; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; font-family: inherit; }
+        .tool:hover { border-color: #00ffff; background: rgba(0,255,255,0.1); }
+        .tool.active { border-color: #ffaa00; color: #ffaa00; background: rgba(255,170,0,0.1); }
+        .tool .lbl { font-size: 7px; position: absolute; bottom: 1px; }
+
+        /* Color picker */
+        #colors { display: none; position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 6px; padding: 6px 10px; border-radius: 10px; background: rgba(0,10,20,0.85); border: 1px solid rgba(0,255,255,0.1); }
+        #colors.show { display: flex; }
+        .swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: all 0.2s; }
+        .swatch:hover, .swatch.active { border-color: #fff; transform: scale(1.2); }
+
+        /* Size slider */
+        #size-bar { display: none; position: fixed; bottom: 74px; right: 20px; z-index: 10; }
+        #size-bar.show { display: block; }
+    </style>
+</head>
+<body>
+    <video id="localVideo" autoplay playsinline muted></video>
+    <canvas id="bg-canvas"></canvas>
+    <canvas id="wb-canvas"></canvas>
+
+    <!-- Setup -->
+    <div id="setup">
+        <div class="setup-inner">
+            <div class="setup-title">TEACH STUDIO</div>
+            <div class="setup-sub">INTERACTIVE TEACHING WITH SCI-FI OVERLAY</div>
+
+            <div class="section">
+                <div class="section-title">&#x1F4F7; MAIN CAMERA (YOUR BACKGROUND)</div>
+                <div class="row">
+                    <button class="btn" id="btn-local-cam"><span class="icon">&#x1F4BB;</span>Local Webcam</button>
+                    <button class="btn" id="btn-no-cam"><span class="icon">&#x1F3A8;</span>Virtual BG Only</button>
+                </div>
+                <div class="status" id="cam-status">No camera selected</div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">&#x1F4F1; CONTENT SOURCE (iPad / Screen / Phone)</div>
+                <div class="row">
+                    <button class="btn" id="btn-pair-device"><span class="icon">&#x1F4F1;</span>Pair iPad/Phone</button>
+                    <button class="btn" id="btn-screen-share"><span class="icon">&#x1F5A5;</span>Share Screen</button>
+                    <button class="btn" id="btn-no-content"><span class="icon">&#x2716;</span>No Content Source</button>
+                </div>
+                <div class="status" id="content-status">No content source</div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">&#x1F3AC; LAYOUT</div>
+                <div class="row">
+                    <button class="btn layout-btn active" data-layout="presenter"><span class="icon">&#x1F464;</span>Presenter</button>
+                    <button class="btn layout-btn" data-layout="split"><span class="icon">&#x25EB;</span>Split View</button>
+                    <button class="btn layout-btn" data-layout="pip"><span class="icon">&#x1F5BC;</span>Content + PiP</button>
+                    <button class="btn layout-btn" data-layout="board"><span class="icon">&#x1F4DD;</span>Whiteboard</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">&#x2728; BACKGROUND STYLE</div>
+                <div class="row">
+                    <button class="btn bg-btn active" data-bg="hud">HUD Overlay</button>
+                    <button class="btn bg-btn" data-bg="dark">Dark + Grid</button>
+                    <button class="btn bg-btn" data-bg="space">Deep Space</button>
+                    <button class="btn bg-btn" data-bg="matrix">Matrix Rain</button>
+                    <button class="btn bg-btn" data-bg="clean">Clean</button>
+                </div>
+            </div>
+
+            <div style="text-align:center;margin-top:20px;">
+                <button class="btn primary" id="btn-start">&#x1F680; START TEACHING</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pair overlay -->
+    <div id="pair-overlay">
+        <div class="p-card">
+            <div style="font-size:13px;letter-spacing:4px;opacity:0.7;margin-bottom:20px;">P A I R &nbsp; D E V I C E</div>
+            <div style="font-size:11px;opacity:0.5;">Open <span style="color:#ffaa00;">jarvis.tuxy.online/teach</span> on your iPad/phone</div>
+            <div style="font-size:10px;opacity:0.3;margin:12px 0;">Scan QR:</div>
+            <canvas id="qr-canvas" width="180" height="180" style="margin:0 auto 10px;display:block;border-radius:8px;"></canvas>
+            <div id="pair-code-display" style="font-size:40px;font-weight:bold;letter-spacing:10px;margin:10px 0;text-shadow:0 0 20px rgba(0,255,255,0.5);">------</div>
+            <div id="p-status" style="font-size:11px;color:rgba(0,255,255,0.5);">Generating...</div>
+            <button class="btn" id="pair-cancel" style="margin-top:10px;border-color:rgba(255,60,60,0.4);color:#ff5555;">CANCEL</button>
+        </div>
+    </div>
+
+    <!-- Mobile UI -->
+    <div id="mobile-ui" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(8,8,16,0.98);">
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;padding:30px;border:1px solid rgba(0,255,255,0.2);border-radius:12px;background:rgba(0,20,40,0.6);min-width:300px;">
+            <div style="font-size:13px;letter-spacing:3px;opacity:0.7;margin-bottom:20px;">TEACH STUDIO</div>
+            <div id="m-choice">
+                <button class="btn" id="m-play-here" style="display:block;width:100%;margin:8px 0;padding:16px;">USE ON THIS DEVICE</button>
+                <button class="btn" id="m-pair-btn" style="display:block;width:100%;margin:8px 0;padding:16px;">PAIR WITH DESKTOP</button>
+            </div>
+            <div id="m-pair-form" style="display:none;">
+                <div style="margin:12px 0;font-size:11px;opacity:0.5;">Choose what to share:</div>
+                <div class="row" style="justify-content:center;margin-bottom:12px;">
+                    <button class="btn" id="m-share-cam" style="flex:0;">&#x1F4F7; Camera</button>
+                    <button class="btn" id="m-share-screen" style="flex:0;">&#x1F5A5; Screen</button>
+                </div>
+                <video id="mobile-preview" autoplay playsinline muted style="width:260px;height:195px;border-radius:8px;border:1px solid rgba(0,255,255,0.2);background:#000;margin:10px auto;display:none;object-fit:cover;"></video>
+                <div style="margin:12px 0;"><input id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code" style="background:rgba(0,20,40,0.8);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:12px 16px;font-family:inherit;font-size:28px;text-align:center;letter-spacing:8px;border-radius:6px;width:220px;outline:none;"></div>
+                <button class="btn" id="pair-connect">C O N N E C T</button>
+                <div id="m-status" style="font-size:11px;margin:10px 0;color:rgba(0,255,255,0.5);">Enter 6-digit code</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="lib/qrcode/qrcode.min.js"></script>
+    <script src="lib/peerjs/peerjs.min.js"></script>
+
+    <script>
+    (function() {
+        'use strict';
+        var F = "'Courier New',Consolas,monospace";
+        var PI = Math.PI, TAU = PI * 2;
+
+        // ═══════════════════════════════════════════════════════════
+        // STATE
+        // ═══════════════════════════════════════════════════════════
+
+        var S = {
+            bgCanvas: null, bgCtx: null, wbCanvas: null, wbCtx: null,
+            w: 0, h: 0,
+            // Sources
+            localStream: null, localVideo: null,
+            contentStream: null, contentVideo: null,
+            hasLocalCam: false, hasContent: false,
+            // Layout & style
+            layout: 'presenter', bgStyle: 'hud',
+            // Whiteboard
+            wbTool: 'pen', wbColor: '#00ffff', wbSize: 3,
+            wbDrawing: false, wbLastX: 0, wbLastY: 0,
+            wbHistory: [], wbHistoryIdx: -1,
+            // Pointer
+            pointerX: -100, pointerY: -100, pointerActive: false,
+            // Recording
+            recording: false, mediaRecorder: null, recordedChunks: [], recordStart: 0,
+            // Pairing
+            peer: null, pairCode: null,
+            // Stars (for space bg)
+            stars: [],
+            // Matrix rain
+            matrixCols: [],
+            // Time
+            fps: 0, frameCount: 0, lastFpsTime: 0,
+            // Teaching active
+            active: false,
+            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+            mobileShareMode: 'camera', // 'camera' or 'screen'
+        };
+
+        // ═══════════════════════════════════════════════════════════
+        // UTILS
+        // ═══════════════════════════════════════════════════════════
+
+        function lerp(a,b,t){return a+(b-a)*t;}
+        function rand(a,b){return a+Math.random()*(b-a);}
+
+        // ═══════════════════════════════════════════════════════════
+        // CAMERA & SOURCES
+        // ═══════════════════════════════════════════════════════════
+
+        function startLocalCam() {
+            return navigator.mediaDevices.getUserMedia({ video: { width: {ideal:1280}, height: {ideal:720} }, audio: false })
+            .then(function(stream) {
+                S.localStream = stream;
+                S.localVideo = document.getElementById('localVideo');
+                S.localVideo.srcObject = stream;
+                S.hasLocalCam = true;
+                document.getElementById('cam-status').textContent = 'Webcam active';
+                document.getElementById('cam-status').className = 'status on';
+                document.getElementById('btn-local-cam').classList.add('active');
+            }).catch(function(e) {
+                document.getElementById('cam-status').textContent = 'Camera failed: ' + e.message;
+            });
+        }
+
+        function startScreenShare() {
+            if (!navigator.mediaDevices.getDisplayMedia) {
+                document.getElementById('content-status').textContent = 'Screen share not supported';
+                return Promise.reject();
+            }
+            return navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+            .then(function(stream) {
+                S.contentStream = stream;
+                S.contentVideo = document.createElement('video');
+                S.contentVideo.srcObject = stream;
+                S.contentVideo.autoplay = true; S.contentVideo.muted = true;
+                S.contentVideo.play();
+                S.hasContent = true;
+                document.getElementById('content-status').textContent = 'Screen sharing active';
+                document.getElementById('content-status').className = 'status on';
+                document.getElementById('btn-screen-share').classList.add('active');
+                stream.getVideoTracks()[0].onended = function() {
+                    S.hasContent = false; S.contentVideo = null;
+                    document.getElementById('content-status').textContent = 'Screen share ended';
+                    document.getElementById('content-status').className = 'status';
+                };
+            }).catch(function(e) {
+                document.getElementById('content-status').textContent = 'Cancelled';
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // PAIRING (WebRTC)
+        // ═══════════════════════════════════════════════════════════
+
+        function generatePairCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
+        function drawQRCode(code) {
+            var url = window.location.origin + window.location.pathname + '?pair=' + code;
+            var qr = qrcode(0, 'M'); qr.addData(url); qr.make();
+            var cv = document.getElementById('qr-canvas'); if (!cv) return;
+            var cx = cv.getContext('2d'), sz = cv.width, mc = qr.getModuleCount(), cs = sz / mc;
+            cx.fillStyle = '#0a0a18'; cx.fillRect(0,0,sz,sz); cx.fillStyle = '#00ffff';
+            for (var r = 0; r < mc; r++) for (var c = 0; c < mc; c++) { if (qr.isDark(r,c)) cx.fillRect(c*cs,r*cs,cs+0.5,cs+0.5); }
+        }
+
+        function startPairing() {
+            var code = generatePairCode(); S.pairCode = code;
+            document.getElementById('pair-code-display').textContent = code;
+            document.getElementById('p-status').textContent = 'Waiting for device...';
+            document.getElementById('pair-overlay').style.display = 'block';
+            drawQRCode(code);
+            if (S.peer) S.peer.destroy();
+            S.peer = new Peer('jteach-' + code);
+            S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active — connect from your device'; });
+            S.peer.on('error', function(err) { document.getElementById('p-status').textContent = 'Error: ' + err.type; });
+            S.peer.on('call', function(call) {
+                call.answer();
+                call.on('stream', function(remoteStream) {
+                    S.contentStream = remoteStream;
+                    S.contentVideo = document.createElement('video');
+                    S.contentVideo.srcObject = remoteStream;
+                    S.contentVideo.autoplay = true; S.contentVideo.playsInline = true; S.contentVideo.muted = true;
+                    S.contentVideo.play();
+                    S.hasContent = true;
+                    document.getElementById('pair-overlay').style.display = 'none';
+                    document.getElementById('content-status').textContent = 'Device connected';
+                    document.getElementById('content-status').className = 'status on';
+                    document.getElementById('btn-pair-device').classList.add('active');
+                });
+                call.on('close', function() { S.hasContent = false; S.contentVideo = null; });
+            });
+        }
+
+        function cancelPairing() { document.getElementById('pair-overlay').style.display = 'none'; if (S.peer) S.peer.destroy(); }
+
+        // ═══════════════════════════════════════════════════════════
+        // MOBILE UI
+        // ═══════════════════════════════════════════════════════════
+
+        function initMobileUI() {
+            document.getElementById('mobile-ui').style.display = 'block';
+            document.getElementById('setup').style.display = 'none';
+
+            var autoCode = new URLSearchParams(window.location.search).get('pair');
+            if (autoCode && autoCode.length === 6) {
+                document.getElementById('m-choice').style.display = 'none';
+                document.getElementById('m-pair-form').style.display = 'block';
+                document.getElementById('pair-input').value = autoCode;
+                document.getElementById('m-status').textContent = 'Auto-connecting...';
+                S.mobileShareMode = 'camera';
+                setTimeout(function() { connectMobile(autoCode); }, 800);
+                return;
+            }
+
+            document.getElementById('m-play-here').onclick = function() {
+                document.getElementById('mobile-ui').style.display = 'none';
+                document.getElementById('setup').style.display = 'block';
+                initSetup();
+            };
+            document.getElementById('m-pair-btn').onclick = function() {
+                document.getElementById('m-choice').style.display = 'none';
+                document.getElementById('m-pair-form').style.display = 'block';
+            };
+            document.getElementById('m-share-cam').onclick = function() { S.mobileShareMode = 'camera'; this.classList.add('active'); document.getElementById('m-share-screen').classList.remove('active'); };
+            document.getElementById('m-share-screen').onclick = function() { S.mobileShareMode = 'screen'; this.classList.add('active'); document.getElementById('m-share-cam').classList.remove('active'); };
+            document.getElementById('pair-connect').onclick = function() {
+                var code = document.getElementById('pair-input').value.trim();
+                if (code.length !== 6) { document.getElementById('m-status').textContent = 'Enter 6 digits'; return; }
+                connectMobile(code);
+            };
+            document.getElementById('pair-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('pair-connect').click(); });
+            document.getElementById('m-share-cam').classList.add('active');
+        }
+
+        function connectMobile(code) {
+            var st = document.getElementById('m-status'), pv = document.getElementById('mobile-preview');
+            st.textContent = 'Getting media...';
+            var constraints;
+            if (S.mobileShareMode === 'screen' && navigator.mediaDevices.getDisplayMedia) {
+                navigator.mediaDevices.getDisplayMedia({ video: true }).then(gotStream).catch(function(e) { st.textContent = 'Screen share failed'; });
+            } else {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: {ideal:1280}, height: {ideal:720} }, audio: false }).then(gotStream).catch(function(e) { st.textContent = 'Camera failed: ' + e.message; });
+            }
+            function gotStream(stream) {
+                pv.srcObject = stream; pv.style.display = 'block';
+                st.textContent = 'Connecting...';
+                var peer = new Peer();
+                peer.on('open', function() {
+                    var call = peer.call('jteach-' + code, stream);
+                    if (!call) { st.textContent = 'Failed to connect'; return; }
+                    st.textContent = 'Streaming to desktop!'; st.style.color = '#00ff88';
+                    var btn = document.getElementById('pair-connect');
+                    btn.textContent = 'DISCONNECT'; btn.style.color = '#ff5555'; btn.style.borderColor = 'rgba(255,60,60,0.4)';
+                    btn.onclick = function() {
+                        call.close(); stream.getTracks().forEach(function(t){t.stop();}); pv.srcObject=null; pv.style.display='none';
+                        st.textContent='Disconnected'; st.style.color='';
+                        btn.textContent='CONNECT'; btn.style.color=''; btn.style.borderColor='';
+                        btn.onclick=function(){var c=document.getElementById('pair-input').value.trim();if(c.length===6)connectMobile(c);};
+                        peer.destroy();
+                    };
+                });
+                peer.on('error', function(err) { st.textContent = 'Error: ' + err.type; });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // BACKGROUND RENDERERS
+        // ═══════════════════════════════════════════════════════════
+
+        function initBGData() {
+            S.stars = [];
+            for (var i = 0; i < 150; i++) S.stars.push({ x: rand(0,1), y: rand(0,1), s: rand(0.5,2.5), b: rand(0.3,1), t: rand(0,10) });
+            S.matrixCols = [];
+            var cols = Math.ceil(S.w / 14);
+            for (var i = 0; i < cols; i++) S.matrixCols.push({ y: rand(0, S.h), speed: rand(2, 8), chars: [] });
+        }
+
+        function drawBG(ctx, w, h, time) {
+            var vid = S.hasLocalCam ? S.localVideo : null;
+
+            // Camera feed as background
+            if (vid && vid.readyState >= 2) {
+                var vw = vid.videoWidth, vh = vid.videoHeight;
+                var scale = Math.max(w / vw, h / vh);
+                var dw = vw * scale, dh = vh * scale;
+                ctx.save();
+                ctx.translate(w, 0); ctx.scale(-1, 1); // mirror
+                ctx.drawImage(vid, (w - dw) / 2, (h - dh) / 2, dw, dh);
+                ctx.restore();
+            }
+
+            switch (S.bgStyle) {
+                case 'hud': drawBG_HUD(ctx, w, h, time, !!vid); break;
+                case 'dark': drawBG_Dark(ctx, w, h, time, !!vid); break;
+                case 'space': drawBG_Space(ctx, w, h, time, !!vid); break;
+                case 'matrix': drawBG_Matrix(ctx, w, h, time, !!vid); break;
+                case 'clean': if (!vid) { ctx.fillStyle = '#0a0a18'; ctx.fillRect(0,0,w,h); } break;
+            }
+        }
+
+        function drawBG_HUD(ctx, w, h, time, hasCam) {
+            if (!hasCam) { ctx.fillStyle = '#0a0a18'; ctx.fillRect(0,0,w,h); }
+            else { ctx.fillStyle = 'rgba(0,5,15,0.3)'; ctx.fillRect(0,0,w,h); }
+            // Grid
+            ctx.strokeStyle = 'rgba(0,255,255,0.03)'; ctx.lineWidth = 1;
+            for (var x = 50; x < w; x += 50) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+            for (var y = 50; y < h; y += 50) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+            // Corners
+            var s=35,o=12; ctx.strokeStyle='rgba(0,255,255,0.25)'; ctx.lineWidth=2;
+            ctx.beginPath();ctx.moveTo(o,o+s);ctx.lineTo(o,o);ctx.lineTo(o+s,o);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(w-o-s,o);ctx.lineTo(w-o,o);ctx.lineTo(w-o,o+s);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(o,h-o-s);ctx.lineTo(o,h-o);ctx.lineTo(o+s,h-o);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(w-o-s,h-o);ctx.lineTo(w-o,h-o);ctx.lineTo(w-o,h-o-s);ctx.stroke();
+            // Scan line
+            var sy = ((time % 5000) / 5000) * h;
+            var grad = ctx.createLinearGradient(0,sy-30,0,sy+30);
+            grad.addColorStop(0,'transparent'); grad.addColorStop(0.5,'rgba(0,255,255,0.04)'); grad.addColorStop(1,'transparent');
+            ctx.fillStyle = grad; ctx.fillRect(0,sy-30,w,60);
+            // Arcs
+            ctx.strokeStyle = 'rgba(0,255,255,0.04)'; ctx.lineWidth = 1;
+            var r = Math.min(w,h) * 0.35, t = time * 0.0003;
+            for (var i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(w/2,h/2,r+i*30,t+i,t+i+PI/5); ctx.stroke(); }
+        }
+
+        function drawBG_Dark(ctx, w, h, time, hasCam) {
+            if (!hasCam) { ctx.fillStyle = '#050508'; ctx.fillRect(0,0,w,h); }
+            else { ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0,0,w,h); }
+            ctx.strokeStyle = 'rgba(0,255,255,0.05)'; ctx.lineWidth = 1;
+            for (var x = 40; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+            for (var y = 40; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+        }
+
+        function drawBG_Space(ctx, w, h, time, hasCam) {
+            if (hasCam) { ctx.fillStyle = 'rgba(0,0,10,0.7)'; ctx.fillRect(0,0,w,h); }
+            else { ctx.fillStyle = '#020010'; ctx.fillRect(0,0,w,h); }
+            S.stars.forEach(function(s) {
+                var tw = (Math.sin(time * 0.001 * s.t + s.x * 10) + 1) / 2;
+                ctx.globalAlpha = s.b * (0.4 + tw * 0.6);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(s.x * w, s.y * h, s.s, s.s);
+            });
+            ctx.globalAlpha = 1;
+            // Nebula
+            var ng = ctx.createRadialGradient(w*0.3, h*0.4, 0, w*0.3, h*0.4, 300);
+            ng.addColorStop(0, 'rgba(80,0,150,0.06)'); ng.addColorStop(1, 'transparent');
+            ctx.fillStyle = ng; ctx.fillRect(0,0,w,h);
+        }
+
+        function drawBG_Matrix(ctx, w, h, time, hasCam) {
+            if (hasCam) { ctx.fillStyle = 'rgba(0,5,0,0.5)'; ctx.fillRect(0,0,w,h); }
+            else { ctx.fillStyle = 'rgba(0,5,0,0.15)'; ctx.fillRect(0,0,w,h); }
+            ctx.font = '12px monospace'; ctx.fillStyle = 'rgba(0,255,70,0.15)';
+            S.matrixCols.forEach(function(col, i) {
+                var ch = String.fromCharCode(0x30A0 + Math.random() * 96);
+                ctx.fillText(ch, i * 14, col.y);
+                col.y += col.speed;
+                if (col.y > h) col.y = -20;
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CONTENT DRAWING (iPad / Screen share)
+        // ═══════════════════════════════════════════════════════════
+
+        function drawContent(ctx, w, h) {
+            if (!S.hasContent || !S.contentVideo || S.contentVideo.readyState < 2) return;
+            var vid = S.contentVideo;
+            var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
+
+            switch (S.layout) {
+                case 'presenter': {
+                    // Content as floating window bottom-right
+                    var cw = w * 0.35, ch = cw * (vh / vw);
+                    var cx = w - cw - 20, cy = h - ch - 70;
+                    ctx.save();
+                    ctx.shadowColor = 'rgba(0,255,255,0.3)'; ctx.shadowBlur = 20;
+                    ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 2;
+                    ctx.strokeRect(cx - 1, cy - 1, cw + 2, ch + 2);
+                    ctx.shadowBlur = 0;
+                    ctx.drawImage(vid, cx, cy, cw, ch);
+                    ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.4)'; ctx.textAlign = 'right';
+                    ctx.fillText('CONTENT', cx + cw - 4, cy - 4);
+                    ctx.restore();
+                    break;
+                }
+                case 'split': {
+                    // Left half: camera, Right half: content
+                    var cw = w / 2 - 4;
+                    var ch2 = cw * (vh / vw);
+                    var cy = (h - ch2) / 2;
+                    ctx.drawImage(vid, w / 2 + 2, cy, cw, ch2);
+                    ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 1;
+                    ctx.beginPath(); ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h); ctx.stroke();
+                    break;
+                }
+                case 'pip': {
+                    // Content fills most of screen, camera is PiP
+                    var scale = Math.min(w / vw, h / vh) * 0.9;
+                    var dw = vw * scale, dh = vh * scale;
+                    ctx.drawImage(vid, (w - dw) / 2, (h - dh) / 2, dw, dh);
+                    // Camera PiP
+                    if (S.hasLocalCam && S.localVideo && S.localVideo.readyState >= 2) {
+                        var pw = 200, ph = 150;
+                        ctx.save();
+                        ctx.translate(w - 12, 12 + ph); ctx.scale(-1, 1);
+                        ctx.drawImage(S.localVideo, 0, 0, pw, ph);
+                        ctx.restore();
+                        ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 1;
+                        ctx.strokeRect(w - pw - 12, 12, pw, ph);
+                    }
+                    break;
+                }
+                case 'board': {
+                    // Small content reference in corner
+                    var cw2 = 200, ch3 = cw2 * (vh / vw);
+                    ctx.drawImage(vid, 12, 50, cw2, ch3);
+                    ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 1;
+                    ctx.strokeRect(12, 50, cw2, ch3);
+                    break;
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // HUD OVERLAY
+        // ═══════════════════════════════════════════════════════════
+
+        function drawHUD(ctx, w, h, time) {
+            // Title
+            ctx.save(); ctx.font = '10px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.35)'; ctx.textAlign = 'center';
+            ctx.fillText('J.A.R.V.I.S.  TEACH STUDIO', w / 2, 16);
+            ctx.restore();
+
+            // Recording indicator
+            if (S.recording) {
+                var pulse = Math.sin(time / 300) * 0.3 + 0.7;
+                ctx.save();
+                ctx.beginPath(); ctx.arc(w - 30, 20, 6, 0, TAU);
+                ctx.fillStyle = 'rgba(255,50,50,' + pulse + ')'; ctx.fill();
+                ctx.font = '9px ' + F; ctx.fillStyle = '#ff3355'; ctx.textAlign = 'right';
+                var elapsed = Math.floor((time - S.recordStart) / 1000);
+                var mins = Math.floor(elapsed / 60), secs = elapsed % 60;
+                ctx.fillText('REC ' + (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs, w - 42, 24);
+                ctx.restore();
+            }
+
+            // Pointer
+            if (S.pointerActive) {
+                ctx.save();
+                ctx.beginPath(); ctx.arc(S.pointerX, S.pointerY, 12, 0, TAU);
+                ctx.strokeStyle = '#ff3355'; ctx.lineWidth = 2;
+                ctx.shadowColor = '#ff3355'; ctx.shadowBlur = 15;
+                ctx.stroke(); ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(S.pointerX, S.pointerY, 3, 0, TAU);
+                ctx.fillStyle = '#ff3355'; ctx.fill();
+                ctx.restore();
+            }
+
+            // FPS
+            ctx.save(); ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.textAlign = 'left';
+            ctx.fillText('FPS:' + S.fps, 8, h - 4);
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // WHITEBOARD
+        // ═══════════════════════════════════════════════════════════
+
+        function saveWBState() {
+            var data = S.wbCtx.getImageData(0, 0, S.w, S.h);
+            S.wbHistory = S.wbHistory.slice(0, S.wbHistoryIdx + 1);
+            S.wbHistory.push(data);
+            if (S.wbHistory.length > 30) S.wbHistory.shift();
+            S.wbHistoryIdx = S.wbHistory.length - 1;
+        }
+
+        function undoWB() {
+            if (S.wbHistoryIdx > 0) {
+                S.wbHistoryIdx--;
+                S.wbCtx.putImageData(S.wbHistory[S.wbHistoryIdx], 0, 0);
+            }
+        }
+
+        function clearWB() {
+            S.wbCtx.clearRect(0, 0, S.w, S.h);
+            saveWBState();
+        }
+
+        function initWBInput() {
+            var c = S.wbCanvas;
+            c.addEventListener('mousedown', function(e) {
+                if (S.wbTool === 'pointer') { S.pointerActive = true; S.pointerX = e.clientX; S.pointerY = e.clientY; return; }
+                S.wbDrawing = true; S.wbLastX = e.clientX; S.wbLastY = e.clientY;
+            });
+            c.addEventListener('mousemove', function(e) {
+                if (S.wbTool === 'pointer') { S.pointerX = e.clientX; S.pointerY = e.clientY; return; }
+                if (!S.wbDrawing) return;
+                var ctx = S.wbCtx;
+                ctx.beginPath();
+                ctx.moveTo(S.wbLastX, S.wbLastY);
+                ctx.lineTo(e.clientX, e.clientY);
+                ctx.strokeStyle = S.wbTool === 'eraser' ? 'rgba(0,0,0,1)' : S.wbColor;
+                ctx.lineWidth = S.wbTool === 'eraser' ? S.wbSize * 4 : S.wbSize;
+                ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                ctx.globalCompositeOperation = S.wbTool === 'eraser' ? 'destination-out' : 'source-over';
+                if (S.wbTool === 'pen' || S.wbTool === 'highlight') {
+                    ctx.shadowColor = S.wbColor; ctx.shadowBlur = S.wbTool === 'highlight' ? 12 : 4;
+                    if (S.wbTool === 'highlight') { ctx.globalAlpha = 0.4; ctx.lineWidth = S.wbSize * 3; }
+                }
+                ctx.stroke();
+                ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'source-over';
+                S.wbLastX = e.clientX; S.wbLastY = e.clientY;
+            });
+            c.addEventListener('mouseup', function() {
+                if (S.wbTool === 'pointer') { S.pointerActive = false; return; }
+                if (S.wbDrawing) { S.wbDrawing = false; saveWBState(); }
+            });
+            c.addEventListener('mouseleave', function() { S.wbDrawing = false; S.pointerActive = false; });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RECORDING
+        // ═══════════════════════════════════════════════════════════
+
+        function toggleRecording() {
+            if (S.recording) {
+                S.mediaRecorder.stop(); S.recording = false;
+            } else {
+                // Capture both canvases composited
+                var combined = document.createElement('canvas');
+                combined.width = S.w; combined.height = S.h;
+                var cctx = combined.getContext('2d');
+                // Create a stream from compositing loop
+                var stream = combined.captureStream(30);
+                try { S.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' }); }
+                catch(e) { S.mediaRecorder = new MediaRecorder(stream); }
+                S.recordedChunks = [];
+                S.mediaRecorder.ondataavailable = function(e) { if (e.data.size > 0) S.recordedChunks.push(e.data); };
+                S.mediaRecorder.onstop = function() {
+                    var blob = new Blob(S.recordedChunks, { type: 'video/webm' });
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a'); a.href = url; a.download = 'teach-' + Date.now() + '.webm';
+                    a.click(); URL.revokeObjectURL(url);
+                };
+                S.mediaRecorder.start(100);
+                S.recording = true; S.recordStart = performance.now();
+                // Composite loop
+                function compLoop() {
+                    if (!S.recording) return;
+                    cctx.drawImage(S.bgCanvas, 0, 0);
+                    cctx.drawImage(S.wbCanvas, 0, 0);
+                    requestAnimationFrame(compLoop);
+                }
+                compLoop();
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // TOOLBAR
+        // ═══════════════════════════════════════════════════════════
+
+        function buildToolbar() {
+            var tb = document.getElementById('toolbar');
+            tb.innerHTML = '';
+            var tools = [
+                { id: 'pen', icon: '&#x270F;', label: 'Pen' },
+                { id: 'highlight', icon: '&#x1F58C;', label: 'Highlight' },
+                { id: 'eraser', icon: '&#x1F9F9;', label: 'Erase' },
+                { id: 'pointer', icon: '&#x1F534;', label: 'Pointer' },
+                { id: 'undo', icon: '&#x21A9;', label: 'Undo' },
+                { id: 'clear', icon: '&#x1F5D1;', label: 'Clear' },
+                { id: 'record', icon: '&#x23FA;', label: 'Record' },
+                { id: 'menu', icon: '&#x2630;', label: 'Menu' },
+            ];
+            tools.forEach(function(t) {
+                var btn = document.createElement('button');
+                btn.className = 'tool' + (t.id === S.wbTool ? ' active' : '');
+                btn.innerHTML = t.icon;
+                btn.title = t.label;
+                btn.dataset.tool = t.id;
+                btn.onclick = function() {
+                    if (t.id === 'undo') { undoWB(); return; }
+                    if (t.id === 'clear') { clearWB(); return; }
+                    if (t.id === 'record') { toggleRecording(); btn.classList.toggle('active', S.recording); return; }
+                    if (t.id === 'menu') { S.active = false; document.getElementById('setup').style.display = 'block'; tb.classList.remove('show'); document.getElementById('colors').classList.remove('show'); return; }
+                    S.wbTool = t.id;
+                    S.wbCanvas.style.cursor = t.id === 'pointer' ? 'default' : 'crosshair';
+                    tb.querySelectorAll('.tool').forEach(function(b) { b.classList.toggle('active', b.dataset.tool === t.id); });
+                };
+                tb.appendChild(btn);
+            });
+
+            // Colors
+            var cp = document.getElementById('colors');
+            cp.innerHTML = '';
+            var colors = ['#00ffff','#ffaa00','#ff3355','#00ff88','#ff00ff','#ffffff','#ffdd00','#0088ff'];
+            colors.forEach(function(c) {
+                var sw = document.createElement('div');
+                sw.className = 'swatch' + (c === S.wbColor ? ' active' : '');
+                sw.style.background = c;
+                sw.onclick = function() { S.wbColor = c; cp.querySelectorAll('.swatch').forEach(function(s){s.classList.remove('active');}); sw.classList.add('active'); };
+                cp.appendChild(sw);
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RENDER LOOP
+        // ═══════════════════════════════════════════════════════════
+
+        function renderLoop(ts) {
+            if (!S.active) { requestAnimationFrame(renderLoop); return; }
+            var ctx = S.bgCtx, w = S.w, h = S.h;
+            S.frameCount++;
+            if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
+
+            drawBG(ctx, w, h, ts);
+            drawContent(ctx, w, h);
+            drawHUD(ctx, w, h, ts);
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // SETUP
+        // ═══════════════════════════════════════════════════════════
+
+        function initSetup() {
+            document.getElementById('btn-local-cam').onclick = function() { startLocalCam(); };
+            document.getElementById('btn-no-cam').onclick = function() {
+                S.hasLocalCam = false;
+                document.getElementById('cam-status').textContent = 'Virtual background only';
+                document.getElementById('btn-no-cam').classList.add('active');
+                document.getElementById('btn-local-cam').classList.remove('active');
+            };
+            document.getElementById('btn-pair-device').onclick = function() { startPairing(); };
+            document.getElementById('btn-screen-share').onclick = function() { startScreenShare(); };
+            document.getElementById('btn-no-content').onclick = function() {
+                S.hasContent = false;
+                document.getElementById('content-status').textContent = 'No content source';
+                document.querySelectorAll('#btn-pair-device,#btn-screen-share,#btn-no-content').forEach(function(b){b.classList.remove('active');});
+                document.getElementById('btn-no-content').classList.add('active');
+            };
+            document.getElementById('pair-cancel').onclick = cancelPairing;
+
+            // Layout buttons
+            document.querySelectorAll('.layout-btn').forEach(function(btn) {
+                btn.onclick = function() {
+                    S.layout = btn.dataset.layout;
+                    document.querySelectorAll('.layout-btn').forEach(function(b){b.classList.remove('active');});
+                    btn.classList.add('active');
+                };
+            });
+
+            // BG style buttons
+            document.querySelectorAll('.bg-btn').forEach(function(btn) {
+                btn.onclick = function() {
+                    S.bgStyle = btn.dataset.bg;
+                    document.querySelectorAll('.bg-btn').forEach(function(b){b.classList.remove('active');});
+                    btn.classList.add('active');
+                };
+            });
+
+            // Start button
+            document.getElementById('btn-start').onclick = function() {
+                document.getElementById('setup').style.display = 'none';
+                S.active = true;
+                document.getElementById('toolbar').classList.add('show');
+                document.getElementById('colors').classList.add('show');
+                clearWB();
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // KEYBOARD
+        // ═══════════════════════════════════════════════════════════
+
+        function initKeyboard() {
+            window.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && S.active) {
+                    S.active = false;
+                    document.getElementById('setup').style.display = 'block';
+                    document.getElementById('toolbar').classList.remove('show');
+                    document.getElementById('colors').classList.remove('show');
+                }
+                if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undoWB(); }
+                if (e.key === '1') S.wbTool = 'pen';
+                if (e.key === '2') S.wbTool = 'highlight';
+                if (e.key === '3') S.wbTool = 'eraser';
+                if (e.key === '4') S.wbTool = 'pointer';
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════════════
+
+        function init() {
+            S.bgCanvas = document.getElementById('bg-canvas');
+            S.bgCtx = S.bgCanvas.getContext('2d');
+            S.wbCanvas = document.getElementById('wb-canvas');
+            S.wbCtx = S.wbCanvas.getContext('2d');
+
+            function resize() {
+                S.w = window.innerWidth; S.h = window.innerHeight;
+                S.bgCanvas.width = S.w; S.bgCanvas.height = S.h;
+                // Preserve whiteboard on resize
+                var imgData = null;
+                if (S.wbCanvas.width > 0) {
+                    try { imgData = S.wbCtx.getImageData(0, 0, S.wbCanvas.width, S.wbCanvas.height); } catch(e) {}
+                }
+                S.wbCanvas.width = S.w; S.wbCanvas.height = S.h;
+                if (imgData) S.wbCtx.putImageData(imgData, 0, 0);
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            initBGData();
+            initWBInput();
+            buildToolbar();
+            initKeyboard();
+
+            if (S.isMobile) {
+                initMobileUI();
+            } else {
+                initSetup();
+            }
+
+            S.lastFpsTime = performance.now();
+            requestAnimationFrame(renderLoop);
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>
