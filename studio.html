@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS | Camera Studio</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #080810; }
+        body { font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
+        #video { display: none; }
+        #c { display: block; width: 100vw; height: 100vh; }
+
+        /* Camera choice */
+        #cam-choice { display: none; position: fixed; inset: 0; z-index: 150; background: rgba(8,8,16,0.98); }
+        .cc-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); backdrop-filter: blur(20px); }
+        .cc-title { font-size: 16px; letter-spacing: 5px; opacity: 0.8; margin-bottom: 6px; text-shadow: 0 0 20px rgba(0,255,255,0.3); }
+        .cc-sub { font-size: 11px; opacity: 0.4; margin-bottom: 24px; max-width: 400px; }
+        .cc-buttons { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+        .cc-btn { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 18px 24px; font-family: inherit; font-size: 13px; cursor: pointer; border-radius: 8px; transition: all 0.2s; min-width: 150px; }
+        .cc-btn:hover { background: rgba(0,255,255,0.1); border-color: #00ffff; box-shadow: 0 0 20px rgba(0,255,255,0.2); }
+        .cc-btn .icon { font-size: 28px; display: block; margin-bottom: 6px; }
+        .cc-btn .label { font-size: 10px; opacity: 0.5; margin-top: 4px; display: block; }
+
+        /* Pair overlay */
+        #pair-overlay { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(8,8,16,0.95); }
+        .p-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 36px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); min-width: 320px; }
+        .holo-btn { background: transparent; border: 1px solid rgba(0,255,255,0.4); color: #00ffff; padding: 8px 22px; font-family: inherit; font-size: 12px; cursor: pointer; border-radius: 4px; letter-spacing: 2px; margin: 4px; }
+
+        /* Mobile */
+        #mobile-ui { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(8,8,16,0.98); }
+        .m-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 36px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); min-width: 300px; }
+        .m-input { background: rgba(0,20,40,0.8); border: 1px solid rgba(0,255,255,0.3); color: #00ffff; padding: 12px 16px; font-family: inherit; font-size: 28px; text-align: center; letter-spacing: 8px; border-radius: 6px; width: 220px; outline: none; }
+        #mobile-preview { width: 260px; height: 195px; border-radius: 8px; border: 1px solid rgba(0,255,255,0.2); background: #000; margin: 10px auto; display: none; object-fit: cover; }
+
+        /* Controls panel */
+        #controls { display: none; position: fixed; right: 16px; top: 50%; transform: translateY(-50%); z-index: 10; width: 220px; padding: 14px; border-radius: 12px; background: rgba(0,10,20,0.9); border: 1px solid rgba(0,255,255,0.12); backdrop-filter: blur(10px); max-height: 80vh; overflow-y: auto; }
+        #controls.show { display: block; }
+        .ctrl-title { font-size: 9px; letter-spacing: 2px; opacity: 0.4; margin: 10px 0 6px; }
+        .ctrl-title:first-child { margin-top: 0; }
+        .ctrl-row { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+        .ctrl-btn { flex: 1; min-width: 44px; padding: 8px 4px; background: rgba(0,20,40,0.6); border: 1px solid rgba(0,255,255,0.15); color: #00ffff; font-family: inherit; font-size: 9px; cursor: pointer; border-radius: 5px; text-align: center; transition: all 0.15s; }
+        .ctrl-btn:hover { border-color: #00ffff; background: rgba(0,40,80,0.4); }
+        .ctrl-btn.active { border-color: #00ff88; color: #00ff88; background: rgba(0,40,20,0.3); }
+        .ctrl-slider { width: 100%; margin: 4px 0; accent-color: #00ffff; }
+        .ctrl-label { font-size: 8px; opacity: 0.4; }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="c"></canvas>
+
+    <div id="cam-choice">
+        <div class="cc-card">
+            <div class="cc-title">CAMERA STUDIO</div>
+            <div class="cc-sub">Real-time camera processing — backgrounds, effects, color grading</div>
+            <div class="cc-buttons">
+                <button class="cc-btn" id="cc-local"><span class="icon">&#x1F4F7;</span>Local Camera<span class="label">This device</span></button>
+                <button class="cc-btn" id="cc-phone"><span class="icon">&#x1F4F1;</span>Pair Phone<span class="label">Stream via QR</span></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="pair-overlay">
+        <div class="p-card">
+            <div style="font-size:12px;letter-spacing:3px;opacity:0.7;margin-bottom:18px;">P A I R</div>
+            <div style="font-size:11px;opacity:0.4;">Open <span style="color:#ffaa00;">jarvis.tuxy.online/studio</span></div>
+            <div style="font-size:10px;opacity:0.3;margin:10px 0;">Scan QR:</div>
+            <canvas id="qr-canvas" width="180" height="180" style="margin:0 auto 10px;display:block;border-radius:8px;"></canvas>
+            <div id="pair-code-display" style="font-size:38px;font-weight:bold;letter-spacing:10px;margin:10px 0;text-shadow:0 0 20px rgba(0,255,255,0.5);">------</div>
+            <div id="p-status" style="font-size:11px;color:rgba(0,255,255,0.5);">Generating...</div>
+            <button class="holo-btn" id="pair-cancel" style="border-color:rgba(255,60,60,0.4);color:#ff5555;margin-top:8px;">CANCEL</button>
+        </div>
+    </div>
+
+    <div id="mobile-ui">
+        <div class="m-card">
+            <div style="font-size:12px;letter-spacing:3px;opacity:0.7;margin-bottom:18px;">CAMERA STUDIO</div>
+            <div id="m-choice">
+                <button class="cc-btn" id="m-play-here" style="display:block;width:100%;margin:8px 0;padding:16px;">USE ON THIS DEVICE</button>
+                <button class="cc-btn" id="m-pair-btn" style="display:block;width:100%;margin:8px 0;padding:16px;">PAIR WITH DESKTOP</button>
+            </div>
+            <div id="m-pair-form" style="display:none;">
+                <div style="margin:8px 0;">
+                    <button class="holo-btn" id="m-cam-front">&#x1F933; Front</button>
+                    <button class="holo-btn" id="m-cam-back">&#x1F4F8; Back</button>
+                </div>
+                <video id="mobile-preview" autoplay playsinline muted></video>
+                <div style="margin:10px 0;"><input class="m-input" id="pair-input" type="text" inputmode="numeric" maxlength="6" placeholder="Code"></div>
+                <button class="holo-btn" id="pair-connect">CONNECT</button>
+                <div id="m-status" style="font-size:10px;margin:8px 0;color:rgba(0,255,255,0.5);">Enter code</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="controls">
+        <div class="ctrl-title">BACKGROUND</div>
+        <div class="ctrl-row">
+            <button class="ctrl-btn bg-btn active" data-bg="none">None</button>
+            <button class="ctrl-btn bg-btn" data-bg="blur">Blur</button>
+            <button class="ctrl-btn bg-btn" data-bg="remove">Remove</button>
+        </div>
+        <div class="ctrl-row">
+            <button class="ctrl-btn bg-btn" data-bg="space">Space</button>
+            <button class="ctrl-btn bg-btn" data-bg="gradient">Gradient</button>
+            <button class="ctrl-btn bg-btn" data-bg="classroom">Class</button>
+        </div>
+        <div class="ctrl-label">Blur Amount</div>
+        <input type="range" class="ctrl-slider" id="blur-amount" min="2" max="30" value="12">
+
+        <div class="ctrl-title">COLOR GRADING</div>
+        <div class="ctrl-label">Brightness</div>
+        <input type="range" class="ctrl-slider" id="brightness" min="50" max="200" value="100">
+        <div class="ctrl-label">Contrast</div>
+        <input type="range" class="ctrl-slider" id="contrast" min="50" max="200" value="100">
+        <div class="ctrl-label">Saturation</div>
+        <input type="range" class="ctrl-slider" id="saturation" min="0" max="300" value="100">
+        <div class="ctrl-label">Warmth</div>
+        <input type="range" class="ctrl-slider" id="warmth" min="-50" max="50" value="0">
+
+        <div class="ctrl-title">EFFECTS</div>
+        <div class="ctrl-row">
+            <button class="ctrl-btn fx-btn" data-fx="none">None</button>
+            <button class="ctrl-btn fx-btn" data-fx="vignette">Vignette</button>
+            <button class="ctrl-btn fx-btn" data-fx="film">Film</button>
+        </div>
+        <div class="ctrl-row">
+            <button class="ctrl-btn fx-btn" data-fx="cool">Cool</button>
+            <button class="ctrl-btn fx-btn" data-fx="warm">Warm</button>
+            <button class="ctrl-btn fx-btn" data-fx="bw">B&W</button>
+        </div>
+
+        <div class="ctrl-title">FRAME</div>
+        <div class="ctrl-row">
+            <button class="ctrl-btn frame-btn" data-frame="none">None</button>
+            <button class="ctrl-btn frame-btn" data-frame="circle">Circle</button>
+            <button class="ctrl-btn frame-btn" data-frame="rounded">Rounded</button>
+            <button class="ctrl-btn frame-btn" data-frame="hud">HUD</button>
+        </div>
+
+        <div class="ctrl-title">MIRROR</div>
+        <div class="ctrl-row">
+            <button class="ctrl-btn" id="btn-mirror">Flip Horizontal</button>
+            <button class="ctrl-btn" id="btn-snapshot">&#x1F4F8; Snapshot</button>
+        </div>
+    </div>
+
+    <script src="lib/qrcode/qrcode.min.js"></script>
+    <script src="lib/peerjs/peerjs.min.js"></script>
+    <script src="lib/selfie_seg/selfie_segmentation.js"></script>
+
+    <script>
+    (function() {
+        'use strict';
+        var F = "'Courier New',Consolas,monospace";
+        var PI = Math.PI, TAU = PI * 2;
+
+        // ═══════════════════════════════════════════════════════════
+        // STATE
+        // ═══════════════════════════════════════════════════════════
+
+        var S = {
+            canvas: null, ctx: null, w: 0, h: 0,
+            // Video
+            localVideo: null, localStream: null,
+            remoteVideo: null, usingRemote: false,
+            // Segmentation
+            seg: null, segMask: null,
+            segCanvas: null, segCtx: null,
+            personCanvas: null, personCtx: null,
+            // Settings
+            bgMode: 'none', // none, blur, remove, space, gradient, classroom
+            blurAmount: 12,
+            brightness: 100, contrast: 100, saturation: 100, warmth: 0,
+            fxMode: 'none', // none, vignette, film, cool, warm, bw
+            frameMode: 'none', // none, circle, rounded, hud
+            mirror: true,
+            // Stars
+            stars: [],
+            // Pairing
+            peer: null,
+            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+            mobileFacing: 'user',
+            // FPS
+            fps: 0, frameCount: 0, lastFpsTime: 0,
+            active: false,
+        };
+
+        // ═══════════════════════════════════════════════════════════
+        // UTILS
+        // ═══════════════════════════════════════════════════════════
+
+        function rand(a,b){return a+Math.random()*(b-a);}
+
+        // ═══════════════════════════════════════════════════════════
+        // SEGMENTATION
+        // ═══════════════════════════════════════════════════════════
+
+        function initSeg() {
+            try {
+                S.seg = new SelfieSegmentation({ locateFile: function(f) { return 'lib/selfie_seg/' + f; } });
+                S.seg.setOptions({ modelSelection: 1 });
+                S.seg.onResults(onSegResults);
+                S.personCanvas = document.createElement('canvas');
+                S.personCtx = S.personCanvas.getContext('2d');
+                S.segCanvas = document.createElement('canvas');
+                S.segCtx = S.segCanvas.getContext('2d');
+            } catch(e) { console.warn('Seg init failed:', e); }
+        }
+
+        function onSegResults(results) {
+            S.segMask = results.segmentationMask;
+            var vid = getActiveVideo();
+            if (!vid || vid.readyState < 2) return;
+            var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
+
+            // Build person-only image
+            S.personCanvas.width = vw; S.personCanvas.height = vh;
+            var pc = S.personCtx;
+            pc.clearRect(0, 0, vw, vh);
+            pc.drawImage(vid, 0, 0, vw, vh);
+            pc.globalCompositeOperation = 'destination-in';
+            pc.drawImage(results.segmentationMask, 0, 0, vw, vh);
+            pc.globalCompositeOperation = 'source-over';
+        }
+
+        var _segSkip = false;
+        function processSegLoop() {
+            if (S.bgMode === 'none' && S.bgMode !== 'blur') { setTimeout(processSegLoop, 200); return; }
+            var vid = getActiveVideo();
+            if (!vid || vid.readyState < 2) { setTimeout(processSegLoop, 200); return; }
+            _segSkip = !_segSkip;
+            if (_segSkip) { requestAnimationFrame(processSegLoop); return; }
+            if (S.seg) {
+                S.seg.send({ image: vid }).then(function() {
+                    requestAnimationFrame(processSegLoop);
+                }).catch(function() { setTimeout(processSegLoop, 300); });
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // VIDEO SOURCE
+        // ═══════════════════════════════════════════════════════════
+
+        function getActiveVideo() {
+            return S.usingRemote ? S.remoteVideo : S.localVideo;
+        }
+
+        function startLocalCam() {
+            return navigator.mediaDevices.getUserMedia({ video: { width: {ideal:1280}, height: {ideal:720} }, audio: false })
+            .then(function(stream) {
+                S.localStream = stream;
+                S.localVideo = document.getElementById('video');
+                S.localVideo.srcObject = stream;
+                return S.localVideo.play();
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // PAIRING
+        // ═══════════════════════════════════════════════════════════
+
+        function generatePairCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
+        function drawQRCode(code) {
+            var url = window.location.origin + window.location.pathname + '?pair=' + code;
+            var qr = qrcode(0, 'M'); qr.addData(url); qr.make();
+            var cv = document.getElementById('qr-canvas'); if (!cv) return;
+            var cx = cv.getContext('2d'), sz = cv.width, mc = qr.getModuleCount(), cs = sz / mc;
+            cx.fillStyle = '#0a0a18'; cx.fillRect(0,0,sz,sz); cx.fillStyle = '#00ffff';
+            for (var r = 0; r < mc; r++) for (var c = 0; c < mc; c++) { if (qr.isDark(r,c)) cx.fillRect(c*cs,r*cs,cs+0.5,cs+0.5); }
+        }
+
+        function startPairing() {
+            var code = generatePairCode();
+            document.getElementById('pair-code-display').textContent = code;
+            document.getElementById('p-status').textContent = 'Waiting...';
+            document.getElementById('pair-overlay').style.display = 'block';
+            drawQRCode(code);
+            if (S.peer) S.peer.destroy();
+            S.peer = new Peer('jstudio-' + code);
+            S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active...'; });
+            S.peer.on('error', function(err) { document.getElementById('p-status').textContent = 'Error: ' + err.type; });
+            S.peer.on('call', function(call) {
+                call.answer();
+                call.on('stream', function(rs) {
+                    S.remoteVideo = document.createElement('video');
+                    S.remoteVideo.srcObject = rs; S.remoteVideo.autoplay = true; S.remoteVideo.playsInline = true; S.remoteVideo.muted = true;
+                    S.remoteVideo.play();
+                    S.usingRemote = true;
+                    document.getElementById('pair-overlay').style.display = 'none';
+                    launchStudio();
+                });
+            });
+        }
+        function cancelPairing() { document.getElementById('pair-overlay').style.display = 'none'; if (S.peer) S.peer.destroy(); }
+
+        function initMobileUI() {
+            document.getElementById('mobile-ui').style.display = 'block';
+            var autoCode = new URLSearchParams(window.location.search).get('pair');
+            if (autoCode && autoCode.length === 6) {
+                document.getElementById('m-choice').style.display = 'none';
+                document.getElementById('m-pair-form').style.display = 'block';
+                document.getElementById('pair-input').value = autoCode;
+                document.getElementById('m-status').textContent = 'Auto-connecting...';
+                setTimeout(function() { connectMobile(autoCode); }, 800);
+                return;
+            }
+            document.getElementById('m-play-here').onclick = function() {
+                document.getElementById('mobile-ui').style.display = 'none';
+                startLocalCam().then(launchStudio);
+            };
+            document.getElementById('m-pair-btn').onclick = function() {
+                document.getElementById('m-choice').style.display = 'none';
+                document.getElementById('m-pair-form').style.display = 'block';
+            };
+            document.getElementById('m-cam-front').onclick = function() { S.mobileFacing = 'user'; };
+            document.getElementById('m-cam-back').onclick = function() { S.mobileFacing = 'environment'; };
+            document.getElementById('pair-connect').onclick = function() {
+                var c = document.getElementById('pair-input').value.trim();
+                if (c.length !== 6) { document.getElementById('m-status').textContent = 'Enter 6 digits'; return; }
+                connectMobile(c);
+            };
+            document.getElementById('pair-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('pair-connect').click(); });
+        }
+
+        function connectMobile(code) {
+            var st = document.getElementById('m-status'), pv = document.getElementById('mobile-preview');
+            st.textContent = 'Connecting...';
+            var peer = new Peer();
+            peer.on('open', function() {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: S.mobileFacing, width: {ideal:1280}, height: {ideal:720} }, audio: false })
+                .then(function(stream) {
+                    pv.srcObject = stream; pv.style.display = 'block';
+                    var call = peer.call('jstudio-' + code, stream);
+                    if (!call) { st.textContent = 'Failed'; return; }
+                    st.textContent = 'Streaming...'; st.style.color = '#00ff88';
+                    var btn = document.getElementById('pair-connect');
+                    btn.textContent = 'DISCONNECT'; btn.style.color = '#ff5555';
+                    btn.onclick = function() { call.close(); stream.getTracks().forEach(function(t){t.stop();}); pv.srcObject=null; pv.style.display='none'; st.textContent='Disconnected'; st.style.color=''; btn.textContent='CONNECT'; btn.style.color=''; btn.onclick=function(){var c=document.getElementById('pair-input').value.trim();if(c.length===6)connectMobile(c);}; peer.destroy(); };
+                }).catch(function(err) { st.textContent = 'Camera: ' + err.message; });
+            });
+            peer.on('error', function(err) { st.textContent = 'Error: ' + err.type; });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // VIRTUAL BACKGROUNDS
+        // ═══════════════════════════════════════════════════════════
+
+        function initStars() {
+            S.stars = [];
+            for (var i = 0; i < 120; i++) S.stars.push({ x: rand(0,1), y: rand(0,1), s: rand(0.5,2), b: rand(0.3,1), t: rand(0,10) });
+        }
+
+        function drawVirtualBG(ctx, w, h, time) {
+            switch (S.bgMode) {
+                case 'space':
+                    ctx.fillStyle = '#020010'; ctx.fillRect(0,0,w,h);
+                    S.stars.forEach(function(s) {
+                        var tw = (Math.sin(time * 0.001 * s.t + s.x * 10) + 1) / 2;
+                        ctx.globalAlpha = s.b * (0.4 + tw * 0.6);
+                        ctx.fillStyle = '#fff'; ctx.fillRect(s.x * w, s.y * h, s.s, s.s);
+                    });
+                    ctx.globalAlpha = 1;
+                    var ng = ctx.createRadialGradient(w*0.3,h*0.4,0,w*0.3,h*0.4,300);
+                    ng.addColorStop(0,'rgba(60,0,120,0.1)'); ng.addColorStop(1,'transparent');
+                    ctx.fillStyle = ng; ctx.fillRect(0,0,w,h);
+                    break;
+                case 'gradient':
+                    var g = ctx.createLinearGradient(0,0,w,h);
+                    g.addColorStop(0,'#1a0030'); g.addColorStop(0.5,'#001530'); g.addColorStop(1,'#002020');
+                    ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+                    break;
+                case 'classroom':
+                    ctx.fillStyle = '#1a1510'; ctx.fillRect(0,0,w,h);
+                    // Chalkboard
+                    ctx.fillStyle = '#1a3020'; ctx.fillRect(w*0.1, h*0.1, w*0.8, h*0.6);
+                    ctx.strokeStyle = '#8B7355'; ctx.lineWidth = 8; ctx.strokeRect(w*0.1, h*0.1, w*0.8, h*0.6);
+                    // Desk
+                    ctx.fillStyle = '#3a2510';
+                    ctx.fillRect(0, h*0.78, w, h*0.22);
+                    ctx.strokeStyle = '#5a3520'; ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.moveTo(0, h*0.78); ctx.lineTo(w, h*0.78); ctx.stroke();
+                    break;
+                case 'remove':
+                    ctx.fillStyle = '#080810'; ctx.fillRect(0,0,w,h);
+                    // Subtle grid
+                    ctx.strokeStyle = 'rgba(0,255,255,0.03)'; ctx.lineWidth = 1;
+                    for (var x = 40; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+                    for (var y = 40; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+                    break;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RENDERING
+        // ═══════════════════════════════════════════════════════════
+
+        function renderLoop(ts) {
+            if (!S.active) { requestAnimationFrame(renderLoop); return; }
+            var ctx = S.ctx, w = S.w, h = S.h;
+            S.frameCount++;
+            if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
+
+            var vid = getActiveVideo();
+            if (!vid || vid.readyState < 2) { ctx.fillStyle = '#080810'; ctx.fillRect(0,0,w,h); requestAnimationFrame(renderLoop); return; }
+            var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
+
+            // Clear
+            ctx.fillStyle = '#080810'; ctx.fillRect(0,0,w,h);
+
+            // Fit video to canvas
+            var scale = Math.min(w / vw, h / vh);
+            var dw = vw * scale, dh = vh * scale;
+            var dx = (w - dw) / 2, dy = (h - dh) / 2;
+
+            // Apply CSS filters via canvas filter
+            var filterStr = 'brightness(' + (S.brightness / 100) + ') contrast(' + (S.contrast / 100) + ') saturate(' + (S.saturation / 100) + ')';
+            if (S.fxMode === 'bw') filterStr += ' grayscale(1)';
+            if (S.fxMode === 'cool') filterStr += ' hue-rotate(-15deg)';
+            if (S.fxMode === 'warm') filterStr += ' hue-rotate(15deg) saturate(1.2)';
+            if (S.fxMode === 'film') filterStr += ' sepia(0.3) contrast(1.1)';
+
+            ctx.save();
+            ctx.filter = filterStr;
+
+            if (S.bgMode === 'none') {
+                // Just draw raw video
+                if (S.mirror) { ctx.translate(dx + dw, dy); ctx.scale(-1, 1); ctx.drawImage(vid, 0, 0, dw, dh); }
+                else { ctx.drawImage(vid, dx, dy, dw, dh); }
+            } else if (S.bgMode === 'blur') {
+                // Draw blurred BG + sharp person
+                ctx.filter = filterStr + ' blur(' + S.blurAmount + 'px)';
+                if (S.mirror) { ctx.save(); ctx.translate(dx + dw, dy); ctx.scale(-1, 1); ctx.drawImage(vid, 0, 0, dw, dh); ctx.restore(); }
+                else { ctx.drawImage(vid, dx, dy, dw, dh); }
+                // Sharp person on top
+                if (S.personCanvas && S.personCanvas.width > 0) {
+                    ctx.filter = filterStr;
+                    if (S.mirror) { ctx.save(); ctx.translate(dx + dw, dy); ctx.scale(-1, 1); ctx.drawImage(S.personCanvas, 0, 0, dw, dh); ctx.restore(); }
+                    else { ctx.drawImage(S.personCanvas, dx, dy, dw, dh); }
+                }
+            } else {
+                // Virtual BG + person overlay
+                ctx.filter = 'none';
+                drawVirtualBG(ctx, w, h, ts);
+                ctx.filter = filterStr;
+                if (S.personCanvas && S.personCanvas.width > 0) {
+                    if (S.mirror) { ctx.save(); ctx.translate(dx + dw, dy); ctx.scale(-1, 1); ctx.drawImage(S.personCanvas, 0, 0, dw, dh); ctx.restore(); }
+                    else { ctx.drawImage(S.personCanvas, dx, dy, dw, dh); }
+                }
+            }
+
+            ctx.filter = 'none';
+            ctx.restore();
+
+            // Warmth overlay
+            if (S.warmth !== 0) {
+                ctx.globalAlpha = Math.abs(S.warmth) / 200;
+                ctx.fillStyle = S.warmth > 0 ? 'rgba(255,150,50,0.15)' : 'rgba(50,100,255,0.15)';
+                ctx.fillRect(dx, dy, dw, dh);
+                ctx.globalAlpha = 1;
+            }
+
+            // Effects
+            if (S.fxMode === 'vignette') {
+                var vg = ctx.createRadialGradient(w/2, h/2, Math.min(w,h) * 0.25, w/2, h/2, Math.max(w,h) * 0.7);
+                vg.addColorStop(0, 'transparent'); vg.addColorStop(1, 'rgba(0,0,0,0.6)');
+                ctx.fillStyle = vg; ctx.fillRect(0,0,w,h);
+            }
+
+            // Frame
+            switch (S.frameMode) {
+                case 'circle':
+                    ctx.save(); ctx.globalCompositeOperation = 'destination-in';
+                    ctx.beginPath(); ctx.arc(w/2, h/2, Math.min(dw, dh) * 0.45, 0, TAU); ctx.fill();
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 3;
+                    ctx.beginPath(); ctx.arc(w/2, h/2, Math.min(dw, dh) * 0.45, 0, TAU); ctx.stroke();
+                    ctx.restore();
+                    break;
+                case 'rounded':
+                    ctx.save(); ctx.globalCompositeOperation = 'destination-in';
+                    ctx.beginPath();
+                    var rr = 30;
+                    ctx.moveTo(dx+rr,dy); ctx.lineTo(dx+dw-rr,dy); ctx.arcTo(dx+dw,dy,dx+dw,dy+rr,rr);
+                    ctx.lineTo(dx+dw,dy+dh-rr); ctx.arcTo(dx+dw,dy+dh,dx+dw-rr,dy+dh,rr);
+                    ctx.lineTo(dx+rr,dy+dh); ctx.arcTo(dx,dy+dh,dx,dy+dh-rr,rr);
+                    ctx.lineTo(dx,dy+rr); ctx.arcTo(dx,dy,dx+rr,dy,rr);
+                    ctx.fill();
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.restore();
+                    break;
+                case 'hud':
+                    var s = 30, o = 8;
+                    ctx.strokeStyle = 'rgba(0,255,255,0.25)'; ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.moveTo(dx+o,dy+o+s); ctx.lineTo(dx+o,dy+o); ctx.lineTo(dx+o+s,dy+o); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(dx+dw-o-s,dy+o); ctx.lineTo(dx+dw-o,dy+o); ctx.lineTo(dx+dw-o,dy+o+s); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(dx+o,dy+dh-o-s); ctx.lineTo(dx+o,dy+dh-o); ctx.lineTo(dx+o+s,dy+dh-o); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(dx+dw-o-s,dy+dh-o); ctx.lineTo(dx+dw-o,dy+dh-o); ctx.lineTo(dx+dw-o,dy+dh-o-s); ctx.stroke();
+                    // Data
+                    ctx.font = '9px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.3)'; ctx.textAlign = 'left';
+                    ctx.fillText('FPS: ' + S.fps + '  BG: ' + S.bgMode.toUpperCase() + '  FX: ' + S.fxMode.toUpperCase(), dx + 14, dy + dh - 14);
+                    // Scan line
+                    var sy = ((ts % 4000) / 4000) * dh;
+                    ctx.strokeStyle = 'rgba(0,255,255,0.06)'; ctx.lineWidth = 1;
+                    ctx.beginPath(); ctx.moveTo(dx, dy + sy); ctx.lineTo(dx + dw, dy + sy); ctx.stroke();
+                    break;
+            }
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CONTROLS
+        // ═══════════════════════════════════════════════════════════
+
+        function initControls() {
+            // BG buttons
+            document.querySelectorAll('.bg-btn').forEach(function(btn) {
+                btn.onclick = function() {
+                    S.bgMode = btn.dataset.bg;
+                    document.querySelectorAll('.bg-btn').forEach(function(b) { b.classList.remove('active'); });
+                    btn.classList.add('active');
+                    // Start segmentation if needed
+                    if (S.bgMode !== 'none' && S.seg) processSegLoop();
+                };
+            });
+
+            // FX buttons
+            document.querySelectorAll('.fx-btn').forEach(function(btn) {
+                btn.onclick = function() {
+                    S.fxMode = btn.dataset.fx;
+                    document.querySelectorAll('.fx-btn').forEach(function(b) { b.classList.remove('active'); });
+                    btn.classList.add('active');
+                };
+            });
+
+            // Frame buttons
+            document.querySelectorAll('.frame-btn').forEach(function(btn) {
+                btn.onclick = function() {
+                    S.frameMode = btn.dataset.frame;
+                    document.querySelectorAll('.frame-btn').forEach(function(b) { b.classList.remove('active'); });
+                    btn.classList.add('active');
+                };
+            });
+
+            // Sliders
+            document.getElementById('blur-amount').oninput = function() { S.blurAmount = +this.value; };
+            document.getElementById('brightness').oninput = function() { S.brightness = +this.value; };
+            document.getElementById('contrast').oninput = function() { S.contrast = +this.value; };
+            document.getElementById('saturation').oninput = function() { S.saturation = +this.value; };
+            document.getElementById('warmth').oninput = function() { S.warmth = +this.value; };
+
+            // Mirror
+            document.getElementById('btn-mirror').onclick = function() {
+                S.mirror = !S.mirror;
+                this.classList.toggle('active', S.mirror);
+            };
+
+            // Snapshot
+            document.getElementById('btn-snapshot').onclick = function() {
+                var url = S.canvas.toDataURL('image/png');
+                var a = document.createElement('a');
+                a.href = url; a.download = 'studio-' + Date.now() + '.png';
+                a.click();
+            };
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // LAUNCH
+        // ═══════════════════════════════════════════════════════════
+
+        function launchStudio() {
+            document.getElementById('cam-choice').style.display = 'none';
+            document.getElementById('controls').classList.add('show');
+            S.active = true;
+            initSeg();
+            // Start seg loop (it'll wait for video)
+            processSegLoop();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════════════
+
+        function init() {
+            S.canvas = document.getElementById('c');
+            S.ctx = S.canvas.getContext('2d');
+            function resize() { S.w = window.innerWidth; S.h = window.innerHeight; S.canvas.width = S.w; S.canvas.height = S.h; }
+            window.addEventListener('resize', resize); resize();
+            initStars();
+            initControls();
+
+            if (S.isMobile) { initMobileUI(); }
+            else {
+                document.getElementById('cam-choice').style.display = 'block';
+                document.getElementById('cc-local').onclick = function() { startLocalCam().then(launchStudio); };
+                document.getElementById('cc-phone').onclick = function() { startPairing(); };
+                document.getElementById('pair-cancel').onclick = cancelPairing;
+            }
+
+            S.lastFpsTime = performance.now();
+            requestAnimationFrame(renderLoop);
+        }
+
+        init();
+    })();
+    </script>
+</body>
+</html>
