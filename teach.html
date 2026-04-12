@@ -73,8 +73,12 @@
                 <div class="section-title">&#x1F4F7; MAIN CAMERA (YOUR BACKGROUND)</div>
                 <div class="row">
                     <button class="btn" id="btn-local-cam"><span class="icon">&#x1F4BB;</span>Local Webcam</button>
+                    <button class="btn" id="btn-pair-cam"><span class="icon">&#x1F4F1;</span>Pair Phone/iPad</button>
                     <button class="btn" id="btn-no-cam"><span class="icon">&#x1F3A8;</span>Virtual BG Only</button>
-                    <button class="btn" id="btn-bg-remove"><span class="icon">&#x2728;</span>BG Removal</button>
+                </div>
+                <div class="row">
+                    <button class="btn" id="btn-bg-remove"><span class="icon">&#x2728;</span>BG Removal (Local)</button>
+                    <button class="btn" id="btn-bg-remove-paired"><span class="icon">&#x2728;&#x1F4F1;</span>BG Removal (Paired)</button>
                 </div>
                 <div class="status" id="cam-status">No camera selected</div>
             </div>
@@ -353,9 +357,10 @@
         }
 
         function startPairing() {
+            camPairMode = 'content';
             var code = generatePairCode(); S.pairCode = code;
             document.getElementById('pair-code-display').textContent = code;
-            document.getElementById('p-status').textContent = 'Waiting for device...';
+            document.getElementById('p-status').textContent = 'Waiting for content device...';
             document.getElementById('pair-overlay').style.display = 'block';
             drawQRCode(code);
             if (S.peer) S.peer.destroy();
@@ -381,6 +386,66 @@
         }
 
         function cancelPairing() { document.getElementById('pair-overlay').style.display = 'none'; if (S.peer) S.peer.destroy(); }
+
+        // Pair a camera source (main camera, not content)
+        var camPairMode = null; // 'cam' or 'cam-bgr'
+        function startCamPairing(withBGRemoval) {
+            camPairMode = withBGRemoval ? 'cam-bgr' : 'cam';
+            var code = generatePairCode(); S.pairCode = code;
+            document.getElementById('pair-code-display').textContent = code;
+            document.getElementById('p-status').textContent = 'Waiting for camera device...';
+            document.getElementById('pair-overlay').style.display = 'block';
+            drawQRCode(code);
+            if (S.peer) S.peer.destroy();
+            S.peer = new Peer('jteach-' + code);
+            S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active — send camera from your device'; });
+            S.peer.on('error', function(err) { document.getElementById('p-status').textContent = 'Error: ' + err.type; });
+            S.peer.on('call', function(call) {
+                call.answer();
+                call.on('stream', function(remoteStream) {
+                    document.getElementById('pair-overlay').style.display = 'none';
+                    if (camPairMode === 'cam' || camPairMode === 'cam-bgr') {
+                        // Use as main camera
+                        S.localStream = remoteStream;
+                        S.localVideo = document.createElement('video');
+                        S.localVideo.srcObject = remoteStream;
+                        S.localVideo.autoplay = true; S.localVideo.playsInline = true; S.localVideo.muted = true;
+                        S.localVideo.play();
+                        S.hasLocalCam = true;
+                        document.getElementById('cam-status').textContent = 'Paired camera active' + (camPairMode === 'cam-bgr' ? ' + BG removal' : '');
+                        document.getElementById('cam-status').className = 'status on';
+                        document.getElementById('btn-pair-cam').classList.add('active');
+                        if (camPairMode === 'cam-bgr') {
+                            S.bgRemoval = true;
+                            initBGRemoval();
+                            // Wait for video to load then start segmentation
+                            S.localVideo.onloadeddata = function() { processSegFrame(); };
+                            document.getElementById('btn-bg-remove-paired').classList.add('active');
+                        }
+                    } else {
+                        // Content source (existing behavior)
+                        S.contentStream = remoteStream;
+                        S.contentVideo = document.createElement('video');
+                        S.contentVideo.srcObject = remoteStream;
+                        S.contentVideo.autoplay = true; S.contentVideo.playsInline = true; S.contentVideo.muted = true;
+                        S.contentVideo.play();
+                        S.hasContent = true;
+                        document.getElementById('content-status').textContent = 'Device connected';
+                        document.getElementById('content-status').className = 'status on';
+                        document.getElementById('btn-pair-device').classList.add('active');
+                    }
+                });
+                call.on('close', function() {
+                    if (camPairMode === 'cam' || camPairMode === 'cam-bgr') {
+                        S.hasLocalCam = false; S.bgRemoval = false;
+                        document.getElementById('cam-status').textContent = 'Camera disconnected';
+                        document.getElementById('cam-status').className = 'status';
+                    } else {
+                        S.hasContent = false; S.contentVideo = null;
+                    }
+                });
+            });
+        }
 
         // ═══════════════════════════════════════════════════════════
         // MOBILE UI
@@ -1461,22 +1526,38 @@
         // ═══════════════════════════════════════════════════════════
 
         function initSetup() {
-            document.getElementById('btn-local-cam').onclick = function() { startLocalCam(); };
+            function clearCamBtns() {
+                ['btn-local-cam','btn-pair-cam','btn-no-cam','btn-bg-remove','btn-bg-remove-paired'].forEach(function(id) {
+                    document.getElementById(id).classList.remove('active');
+                });
+            }
+            document.getElementById('btn-local-cam').onclick = function() {
+                clearCamBtns(); S.bgRemoval = false;
+                startLocalCam();
+            };
+            document.getElementById('btn-pair-cam').onclick = function() {
+                clearCamBtns(); S.bgRemoval = false;
+                startCamPairing(false);
+            };
             document.getElementById('btn-no-cam').onclick = function() {
-                S.hasLocalCam = false;
+                clearCamBtns(); S.hasLocalCam = false; S.bgRemoval = false;
                 document.getElementById('cam-status').textContent = 'Virtual background only';
                 document.getElementById('btn-no-cam').classList.add('active');
-                document.getElementById('btn-local-cam').classList.remove('active');
             };
             document.getElementById('btn-bg-remove').onclick = function() {
+                clearCamBtns();
                 startLocalCam().then(function() {
                     S.bgRemoval = true;
                     initBGRemoval();
                     processSegFrame();
-                    document.getElementById('cam-status').textContent = 'Webcam + BG Removal active';
+                    document.getElementById('cam-status').textContent = 'Local cam + BG Removal';
                     document.getElementById('cam-status').className = 'status on';
                     document.getElementById('btn-bg-remove').classList.add('active');
                 });
+            };
+            document.getElementById('btn-bg-remove-paired').onclick = function() {
+                clearCamBtns();
+                startCamPairing(true);
             };
             document.getElementById('btn-mic').onclick = function() { enableMic(); };
             document.getElementById('btn-no-mic').onclick = function() {
