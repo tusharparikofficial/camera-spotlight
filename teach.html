@@ -74,8 +74,18 @@
                 <div class="row">
                     <button class="btn" id="btn-local-cam"><span class="icon">&#x1F4BB;</span>Local Webcam</button>
                     <button class="btn" id="btn-no-cam"><span class="icon">&#x1F3A8;</span>Virtual BG Only</button>
+                    <button class="btn" id="btn-bg-remove"><span class="icon">&#x2728;</span>BG Removal</button>
                 </div>
                 <div class="status" id="cam-status">No camera selected</div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">&#x1F3A4; AUDIO</div>
+                <div class="row">
+                    <button class="btn" id="btn-mic"><span class="icon">&#x1F3A4;</span>Enable Microphone</button>
+                    <button class="btn" id="btn-no-mic"><span class="icon">&#x1F507;</span>No Audio</button>
+                </div>
+                <div class="status" id="mic-status">No audio</div>
             </div>
 
             <div class="section">
@@ -116,6 +126,22 @@
                     <button class="btn ratio-btn" data-ratio="9:16">9:16 Reels</button>
                     <button class="btn ratio-btn" data-ratio="1:1">1:1 Square</button>
                     <button class="btn ratio-btn" data-ratio="4:3">4:3 Classic</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">&#x1F4CB; TELEPROMPTER (Optional - not recorded)</div>
+                <textarea id="tp-input" placeholder="Paste your script here... it will scroll across the top of your screen during teaching (invisible in recording)" style="width:100%;height:60px;background:rgba(0,20,40,0.8);border:1px solid rgba(0,255,255,0.2);color:#00ffff;font-family:inherit;font-size:11px;padding:10px;border-radius:6px;resize:vertical;outline:none;"></textarea>
+            </div>
+
+            <div class="section">
+                <div class="section-title">&#x1F4C4; TEMPLATES (Pre-loaded page backgrounds)</div>
+                <div class="row">
+                    <button class="btn tmpl-btn" data-tmpl="none">None</button>
+                    <button class="btn tmpl-btn" data-tmpl="graph">Graph Paper</button>
+                    <button class="btn tmpl-btn" data-tmpl="axes">XY Axes</button>
+                    <button class="btn tmpl-btn" data-tmpl="numberline">Number Line</button>
+                    <button class="btn tmpl-btn" data-tmpl="table">Table 4x4</button>
                 </div>
             </div>
 
@@ -168,8 +194,14 @@
         </div>
     </div>
 
+    <!-- Teleprompter (not captured in recording - pure DOM overlay) -->
+    <div id="teleprompter" style="display:none;position:fixed;top:0;left:0;right:0;z-index:55;height:80px;background:linear-gradient(to bottom,rgba(0,0,0,0.85),transparent);overflow:hidden;pointer-events:none;">
+        <div id="tp-text" style="color:rgba(255,255,255,0.7);font-size:18px;font-family:'Courier New',monospace;padding:10px 60px;white-space:nowrap;transform:translateX(100%);"></div>
+    </div>
+
     <script src="lib/qrcode/qrcode.min.js"></script>
     <script src="lib/peerjs/peerjs.min.js"></script>
+    <script src="lib/selfie_seg/selfie_segmentation.js"></script>
 
     <script>
     (function() {
@@ -215,6 +247,18 @@
             // Recording
             recording: false, mediaRecorder: null, recordedChunks: [], recordStart: 0,
             recCountdown: 0, recCountdownStart: 0,
+            // Audio
+            audioStream: null, hasAudio: false,
+            // Teleprompter
+            tpActive: false, tpText: '', tpSpeed: 1.5, tpPos: 0,
+            // Background removal
+            bgRemoval: false, segmentation: null, segCanvas: null, segCtx: null, segMask: null,
+            // Stamps
+            stampMode: null, // 'check','cross','star','important','correct','wrong'
+            // Templates
+            templateLoaded: null,
+            // Quiz mode
+            quizActive: false, quizQuestion: '', quizTimer: 0, quizTimerStart: 0, quizRevealed: false,
             // Pairing
             peer: null, pairCode: null,
             // Stars (for space bg)
@@ -421,9 +465,9 @@
         }
 
         function drawBG(ctx, w, h, time) {
-            var vid = S.hasLocalCam ? S.localVideo : null;
+            var vid = (S.hasLocalCam && !S.bgRemoval) ? S.localVideo : null;
 
-            // Camera feed as background
+            // Camera feed as background (skip if bg removal active - drawn separately)
             if (vid && vid.readyState >= 2) {
                 var vw = vid.videoWidth, vh = vid.videoHeight;
                 var scale = Math.max(w / vw, h / vh);
@@ -754,6 +798,7 @@
                 var x = e.clientX, y = e.clientY;
                 if (S.wbTool === 'pointer') { S.pointerActive = true; S.pointerX = x; S.pointerY = y; return; }
                 if (S.wbTool === 'text') { placeText(x, y); return; }
+                if (S.wbTool === 'stamp') { placeStamp(x, y); return; }
                 if (S.shapeType) {
                     S.shapeStart = { x: x, y: y };
                     S.wbDrawing = true;
@@ -884,9 +929,13 @@
             var combined = document.createElement('canvas');
             combined.width = r.w; combined.height = r.h;
             var cctx = combined.getContext('2d');
-            var stream = combined.captureStream(30);
-            try { S.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' }); }
-            catch(e) { try { S.mediaRecorder = new MediaRecorder(stream); } catch(e2) { return; } }
+            var vidStream = combined.captureStream(30);
+            // Add audio track if available
+            if (S.audioStream) {
+                S.audioStream.getAudioTracks().forEach(function(t) { vidStream.addTrack(t); });
+            }
+            try { S.mediaRecorder = new MediaRecorder(vidStream, { mimeType: 'video/webm;codecs=vp9' }); }
+            catch(e) { try { S.mediaRecorder = new MediaRecorder(vidStream); } catch(e2) { return; } }
             S.recordedChunks = [];
             S.mediaRecorder.ondataavailable = function(e) { if (e.data.size > 0) S.recordedChunks.push(e.data); };
             S.mediaRecorder.onstop = function() {
@@ -905,6 +954,248 @@
                 requestAnimationFrame(compLoop);
             }
             compLoop();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // AUDIO
+        // ═══════════════════════════════════════════════════════════
+
+        function enableMic() {
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+                S.audioStream = stream; S.hasAudio = true;
+                document.getElementById('mic-status').textContent = 'Microphone active';
+                document.getElementById('mic-status').className = 'status on';
+                document.getElementById('btn-mic').classList.add('active');
+            }).catch(function(e) {
+                document.getElementById('mic-status').textContent = 'Mic failed: ' + e.message;
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // TELEPROMPTER
+        // ═══════════════════════════════════════════════════════════
+
+        function startTeleprompter() {
+            S.tpActive = !S.tpActive;
+            var el = document.getElementById('teleprompter');
+            if (S.tpActive) {
+                S.tpText = document.getElementById('tp-input') ? document.getElementById('tp-input').value : S.tpText;
+                if (!S.tpText.trim()) { S.tpActive = false; return; }
+                document.getElementById('tp-text').textContent = S.tpText;
+                el.style.display = 'block';
+                S.tpPos = window.innerWidth;
+                animateTeleprompter();
+            } else {
+                el.style.display = 'none';
+            }
+        }
+
+        function animateTeleprompter() {
+            if (!S.tpActive) return;
+            S.tpPos -= S.tpSpeed;
+            var el = document.getElementById('tp-text');
+            el.style.transform = 'translateX(' + S.tpPos + 'px)';
+            // Loop when text scrolls completely off
+            if (S.tpPos < -el.offsetWidth) S.tpPos = window.innerWidth;
+            requestAnimationFrame(animateTeleprompter);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // BACKGROUND REMOVAL (Selfie Segmentation)
+        // ═══════════════════════════════════════════════════════════
+
+        function initBGRemoval() {
+            try {
+                S.segmentation = new SelfieSegmentation({ locateFile: function(f) { return 'lib/selfie_seg/' + f; } });
+                S.segmentation.setOptions({ modelSelection: 1 }); // landscape model
+                S.segmentation.onResults(function(results) {
+                    S.segMask = results.segmentationMask;
+                });
+                S.segCanvas = document.createElement('canvas');
+                S.segCtx = S.segCanvas.getContext('2d');
+            } catch(e) { console.warn('Selfie seg failed:', e); S.bgRemoval = false; }
+        }
+
+        function processSegFrame() {
+            if (!S.bgRemoval || !S.segmentation || !S.localVideo || S.localVideo.readyState < 2) return;
+            S.segmentation.send({ image: S.localVideo }).then(function() {
+                if (S.bgRemoval) setTimeout(processSegFrame, 100); // ~10fps for segmentation
+            });
+        }
+
+        function drawBGRemoved(ctx, w, h) {
+            if (!S.segMask || !S.localVideo || S.localVideo.readyState < 2) return;
+            var vid = S.localVideo;
+            var vw = vid.videoWidth, vh = vid.videoHeight;
+            S.segCanvas.width = vw; S.segCanvas.height = vh;
+            var sc = S.segCtx;
+            // Draw the mask
+            sc.drawImage(S.segMask, 0, 0, vw, vh);
+            // Use mask as alpha for the video
+            sc.globalCompositeOperation = 'source-in';
+            sc.save(); sc.translate(vw, 0); sc.scale(-1, 1); // mirror
+            sc.drawImage(vid, 0, 0, vw, vh);
+            sc.restore();
+            sc.globalCompositeOperation = 'source-over';
+            // Draw composited person onto the main canvas
+            var scale = Math.max(w / vw, h / vh);
+            var dw = vw * scale, dh = vh * scale;
+            ctx.drawImage(S.segCanvas, (w - dw) / 2, (h - dh) / 2, dw, dh);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // STAMPS
+        // ═══════════════════════════════════════════════════════════
+
+        var STAMPS = {
+            'check':     { text: '\u2713', color: '#00ff88', size: 48 },
+            'cross':     { text: '\u2717', color: '#ff3355', size: 48 },
+            'star':      { text: '\u2605', color: '#ffdd00', size: 44 },
+            'important': { text: '!',      color: '#ff6600', size: 52 },
+            'correct':   { text: 'CORRECT', color: '#00ff88', size: 20 },
+            'wrong':     { text: 'WRONG',   color: '#ff3355', size: 20 },
+            'think':     { text: '?',       color: '#ffaa00', size: 48 },
+        };
+
+        function placeStamp(x, y) {
+            if (!S.stampMode) return;
+            var st = STAMPS[S.stampMode];
+            var ctx = S.wbCtx;
+            ctx.save();
+            ctx.font = 'bold ' + st.size + 'px ' + F;
+            ctx.fillStyle = st.color;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.shadowColor = st.color; ctx.shadowBlur = 15;
+            ctx.fillText(st.text, x, y);
+            ctx.shadowBlur = 0;
+            ctx.restore();
+            saveWBState();
+            S.stampMode = null; S.wbTool = 'pen';
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // TEMPLATES (draw on whiteboard as background)
+        // ═══════════════════════════════════════════════════════════
+
+        function loadTemplate(type) {
+            S.templateLoaded = type;
+            if (type === 'none') return;
+            var ctx = S.wbCtx, r = S.contentRect;
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0,255,255,0.08)'; ctx.lineWidth = 1;
+            ctx.fillStyle = 'rgba(0,255,255,0.05)';
+            switch(type) {
+                case 'graph': {
+                    var step = 30;
+                    for (var x = r.x; x <= r.x + r.w; x += step) { ctx.beginPath(); ctx.moveTo(x, r.y); ctx.lineTo(x, r.y + r.h); ctx.stroke(); }
+                    for (var y = r.y; y <= r.y + r.h; y += step) { ctx.beginPath(); ctx.moveTo(r.x, y); ctx.lineTo(r.x + r.w, y); ctx.stroke(); }
+                    break;
+                }
+                case 'axes': {
+                    var cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+                    ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.moveTo(r.x + 20, cy); ctx.lineTo(r.x + r.w - 20, cy); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(cx, r.y + 20); ctx.lineTo(cx, r.y + r.h - 20); ctx.stroke();
+                    // Arrow heads
+                    ctx.fillStyle = 'rgba(0,255,255,0.15)';
+                    ctx.beginPath(); ctx.moveTo(r.x + r.w - 20, cy); ctx.lineTo(r.x + r.w - 30, cy - 6); ctx.lineTo(r.x + r.w - 30, cy + 6); ctx.fill();
+                    ctx.beginPath(); ctx.moveTo(cx, r.y + 20); ctx.lineTo(cx - 6, r.y + 30); ctx.lineTo(cx + 6, r.y + 30); ctx.fill();
+                    // Tick marks
+                    ctx.strokeStyle = 'rgba(0,255,255,0.08)'; ctx.lineWidth = 1;
+                    for (var i = -10; i <= 10; i++) {
+                        if (i === 0) continue;
+                        var tx = cx + i * 30;
+                        if (tx > r.x && tx < r.x + r.w) { ctx.beginPath(); ctx.moveTo(tx, cy - 4); ctx.lineTo(tx, cy + 4); ctx.stroke(); }
+                        var ty = cy + i * 30;
+                        if (ty > r.y && ty < r.y + r.h) { ctx.beginPath(); ctx.moveTo(cx - 4, ty); ctx.lineTo(cx + 4, ty); ctx.stroke(); }
+                    }
+                    // Labels
+                    ctx.font = '10px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.12)'; ctx.textAlign = 'center';
+                    ctx.fillText('x', r.x + r.w - 14, cy + 14);
+                    ctx.fillText('y', cx + 14, r.y + 18);
+                    ctx.fillText('O', cx - 10, cy + 14);
+                    break;
+                }
+                case 'numberline': {
+                    var cy = r.y + r.h / 2;
+                    ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.moveTo(r.x + 40, cy); ctx.lineTo(r.x + r.w - 40, cy); ctx.stroke();
+                    // Arrow
+                    ctx.fillStyle = 'rgba(0,255,255,0.15)';
+                    ctx.beginPath(); ctx.moveTo(r.x + r.w - 40, cy); ctx.lineTo(r.x + r.w - 50, cy - 6); ctx.lineTo(r.x + r.w - 50, cy + 6); ctx.fill();
+                    // Ticks
+                    var lineW = r.w - 100;
+                    ctx.font = '10px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.1)'; ctx.textAlign = 'center';
+                    for (var i = -5; i <= 5; i++) {
+                        var tx = r.x + 50 + (i + 5) * lineW / 10;
+                        ctx.strokeStyle = 'rgba(0,255,255,0.1)'; ctx.lineWidth = 1;
+                        ctx.beginPath(); ctx.moveTo(tx, cy - 8); ctx.lineTo(tx, cy + 8); ctx.stroke();
+                        ctx.fillText(i, tx, cy + 22);
+                    }
+                    break;
+                }
+                case 'table': {
+                    var rows = 4, cols = 4;
+                    var tw = r.w * 0.7, th = r.h * 0.6;
+                    var tx = r.x + (r.w - tw) / 2, ty = r.y + (r.h - th) / 2;
+                    var cw = tw / cols, ch = th / rows;
+                    ctx.strokeStyle = 'rgba(0,255,255,0.1)'; ctx.lineWidth = 1;
+                    for (var i = 0; i <= rows; i++) { ctx.beginPath(); ctx.moveTo(tx, ty + i * ch); ctx.lineTo(tx + tw, ty + i * ch); ctx.stroke(); }
+                    for (var i = 0; i <= cols; i++) { ctx.beginPath(); ctx.moveTo(tx + i * cw, ty); ctx.lineTo(tx + i * cw, ty + th); ctx.stroke(); }
+                    break;
+                }
+            }
+            ctx.restore();
+            saveWBState();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // QUIZ MODE
+        // ═══════════════════════════════════════════════════════════
+
+        function startQuiz(question, timerSec) {
+            S.quizActive = true;
+            S.quizQuestion = question || 'Solve: x\u00B2 + 5x + 6 = 0';
+            S.quizTimer = timerSec || 30;
+            S.quizTimerStart = performance.now();
+            S.quizRevealed = false;
+        }
+
+        function drawQuiz(ctx, w, h, time) {
+            if (!S.quizActive) return;
+            var r = S.contentRect;
+            var elapsed = (time - S.quizTimerStart) / 1000;
+            var remaining = Math.max(0, S.quizTimer - elapsed);
+
+            // Question box at top
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,10,25,0.9)';
+            var qh = 60, qw = r.w * 0.8;
+            ctx.fillRect(r.x + (r.w - qw) / 2, r.y + 20, qw, qh);
+            ctx.strokeStyle = '#ffaa00'; ctx.lineWidth = 2;
+            ctx.strokeRect(r.x + (r.w - qw) / 2, r.y + 20, qw, qh);
+            ctx.font = 'bold 18px ' + F; ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
+            ctx.fillText(S.quizQuestion, r.x + r.w / 2, r.y + 55);
+
+            // Timer circle
+            var tcx = r.x + r.w - 50, tcy = r.y + 50, tr = 25;
+            var progress = remaining / S.quizTimer;
+            ctx.beginPath(); ctx.arc(tcx, tcy, tr, 0, TAU);
+            ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill();
+            ctx.beginPath(); ctx.arc(tcx, tcy, tr, -PI / 2, -PI / 2 + TAU * progress);
+            ctx.strokeStyle = remaining < 5 ? '#ff3355' : '#00ffff'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.font = 'bold 14px ' + F; ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(Math.ceil(remaining), tcx, tcy);
+
+            // Flash when time up
+            if (remaining <= 0 && !S.quizRevealed) {
+                S.quizRevealed = true;
+            }
+            if (S.quizRevealed) {
+                ctx.font = 'bold 24px ' + F; ctx.fillStyle = '#ffaa00'; ctx.textAlign = 'center';
+                ctx.fillText('TIME\'S UP! Reveal answer...', r.x + r.w / 2, r.y + r.h / 2);
+            }
+            ctx.restore();
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -1026,6 +1317,40 @@
 
             addSep();
 
+            // Stamps
+            addBtn('\u2713', 'Stamps', '', function() {
+                var panel = document.getElementById('stamp-panel');
+                if (panel) { panel.remove(); return; }
+                panel = document.createElement('div');
+                panel.id = 'stamp-panel';
+                panel.style.cssText = 'position:fixed;bottom:74px;left:50%;transform:translateX(-50%);z-index:60;display:flex;gap:4px;padding:8px;border-radius:8px;background:rgba(0,10,20,0.9);border:1px solid rgba(0,255,255,0.15);';
+                Object.keys(STAMPS).forEach(function(key) {
+                    var st = STAMPS[key];
+                    var b = document.createElement('button');
+                    b.textContent = st.text;
+                    b.title = key;
+                    b.style.cssText = 'background:rgba(0,30,60,0.6);border:1px solid ' + st.color + '40;color:' + st.color + ';width:42px;height:42px;font-size:20px;cursor:pointer;border-radius:6px;font-family:' + F + ';';
+                    b.onclick = function() { S.stampMode = key; S.wbTool = 'stamp'; panel.remove(); };
+                    panel.appendChild(b);
+                });
+                document.body.appendChild(panel);
+            });
+
+            // Quiz
+            addBtn('Q', 'Quiz mode', S.quizActive ? 'active' : '', function() {
+                if (S.quizActive) { S.quizActive = false; this.classList.remove('active'); return; }
+                var q = prompt('Enter question:', 'Solve: x\u00B2 + 5x + 6 = 0');
+                if (q) { startQuiz(q, 30); this.classList.add('active'); }
+            });
+
+            // Teleprompter
+            addBtn('\u23E9', 'Teleprompter', S.tpActive ? 'active' : '', function() {
+                startTeleprompter();
+                this.classList.toggle('active', S.tpActive);
+            });
+
+            addSep();
+
             // Undo / Clear
             addBtn('\u21A9', 'Undo', '', undoWB);
             addBtn('\uD83D\uDDD1', 'Clear', '', clearWB);
@@ -1039,6 +1364,7 @@
             // Menu
             addBtn('\u2630', 'Menu', '', function() {
                 S.active = false;
+                S.tpActive = false; document.getElementById('teleprompter').style.display = 'none';
                 document.getElementById('canvas-wrap').style.display = 'none';
                 document.getElementById('setup').style.display = 'block';
                 tb.classList.remove('show');
@@ -1069,8 +1395,11 @@
             if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
 
             drawBG(ctx, w, h, ts);
+            // BG removal: draw person on top of background
+            if (S.bgRemoval && S.segMask) drawBGRemoved(ctx, w, h);
             drawGrid(ctx);
             drawContent(ctx, w, h);
+            drawQuiz(ctx, w, h, ts);
             drawLowerThird(ctx);
             drawHUD(ctx, w, h, ts);
 
@@ -1139,6 +1468,31 @@
                 document.getElementById('btn-no-cam').classList.add('active');
                 document.getElementById('btn-local-cam').classList.remove('active');
             };
+            document.getElementById('btn-bg-remove').onclick = function() {
+                startLocalCam().then(function() {
+                    S.bgRemoval = true;
+                    initBGRemoval();
+                    processSegFrame();
+                    document.getElementById('cam-status').textContent = 'Webcam + BG Removal active';
+                    document.getElementById('cam-status').className = 'status on';
+                    document.getElementById('btn-bg-remove').classList.add('active');
+                });
+            };
+            document.getElementById('btn-mic').onclick = function() { enableMic(); };
+            document.getElementById('btn-no-mic').onclick = function() {
+                S.hasAudio = false; S.audioStream = null;
+                document.getElementById('mic-status').textContent = 'No audio';
+                document.getElementById('mic-status').className = 'status';
+                document.getElementById('btn-mic').classList.remove('active');
+                document.getElementById('btn-no-mic').classList.add('active');
+            };
+            document.querySelectorAll('.tmpl-btn').forEach(function(btn) {
+                btn.onclick = function() {
+                    S.templateLoaded = btn.dataset.tmpl;
+                    document.querySelectorAll('.tmpl-btn').forEach(function(b) { b.classList.remove('active'); });
+                    btn.classList.add('active');
+                };
+            });
             document.getElementById('btn-pair-device').onclick = function() { startPairing(); };
             document.getElementById('btn-screen-share').onclick = function() { startScreenShare(); };
             document.getElementById('btn-no-content').onclick = function() {
@@ -1184,14 +1538,23 @@
                 S.lowerThird.subtitle = document.getElementById('lt-subtitle').value || '';
                 if (S.lowerThird.title) S.lowerThird.visible = true;
 
+                // Grab teleprompter text
+                var tpInput = document.getElementById('tp-input');
+                if (tpInput) S.tpText = tpInput.value || '';
+
                 document.getElementById('setup').style.display = 'none';
                 document.getElementById('canvas-wrap').style.display = 'block';
                 computeContentRect();
                 S.active = true;
                 document.getElementById('toolbar').classList.add('show');
                 document.getElementById('colors').classList.add('show');
-                buildToolbar(); // rebuild with current state
+                buildToolbar();
                 clearWB();
+
+                // Load template if selected
+                if (S.templateLoaded && S.templateLoaded !== 'none') {
+                    setTimeout(function() { loadTemplate(S.templateLoaded); }, 100);
+                }
             };
         }
 
