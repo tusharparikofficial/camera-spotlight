@@ -674,23 +674,18 @@
         function drawContent(ctx, w, h) {
             contentPixelRect = null; camPipPixelRect = null;
 
-            // Content panel
+            // Content panel - always draggable
             if (S.hasContent && S.contentVideo && S.contentVideo.readyState >= 2) {
-                if (S.layout === 'pip') {
-                    // Content fills most of screen
-                    var vid = S.contentVideo;
-                    var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
-                    var scale = Math.min(w / vw, h / vh) * 0.9;
-                    var dw = vw * scale, dh = vh * scale;
-                    ctx.drawImage(vid, (w - dw) / 2, (h - dh) / 2, dw, dh);
-                } else {
-                    contentPixelRect = drawVideoPanel(ctx, S.contentVideo, S.contentBox, w, h, 'CONTENT', false);
-                }
+                contentPixelRect = drawVideoPanel(ctx, S.contentVideo, S.contentBox, w, h, 'CONTENT  (drag to move, corner to resize)', false);
             }
 
-            // Camera PiP (when layout is pip, or always as option)
-            if (S.layout === 'pip' && S.hasLocalCam && S.localVideo && S.localVideo.readyState >= 2 && !S.bgRemoval) {
-                camPipPixelRect = drawVideoPanel(ctx, S.localVideo, S.camPipBox, w, h, 'CAMERA', true);
+            // Camera PiP - show when camera is local (not as full BG) or always in certain modes
+            if (S.hasLocalCam && S.localVideo && S.localVideo.readyState >= 2 && !S.bgRemoval) {
+                // Don't show PiP if camera is already the full background (presenter/split/board)
+                // Only show if user might want to reposition it
+                if (S.layout === 'pip' || S.hasContent) {
+                    camPipPixelRect = drawVideoPanel(ctx, S.localVideo, S.camPipBox, w, h, 'CAMERA', true);
+                }
             }
         }
 
