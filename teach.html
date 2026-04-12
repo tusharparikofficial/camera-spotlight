@@ -10,10 +10,7 @@
         html, body { width: 100%; height: 100%; overflow: hidden; background: #080810; }
         body { font-family: 'Courier New', Consolas, monospace; color: #00ffff; }
         #localVideo, #remoteVid { display: none; }
-        canvas { display: block; position: fixed; top: 0; left: 0; }
-        #bg-canvas { z-index: 0; pointer-events: none; }
-        #wb-canvas { z-index: 1; cursor: crosshair; pointer-events: none; }
-        #wb-canvas.active { pointer-events: auto; }
+        canvas { display: block; width: 100%; height: 100%; }
 
         /* Setup overlay */
         #setup { display: block; position: fixed; inset: 0; z-index: 100; background: rgba(8,8,16,0.98); overflow-y: auto; }
@@ -37,7 +34,7 @@
         .p-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; padding: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 12px; background: rgba(0,20,40,0.6); min-width: 340px; }
 
         /* Toolbar */
-        #toolbar { display: none; position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; gap: 6px; padding: 8px 14px; border-radius: 12px; background: rgba(0,10,20,0.85); border: 1px solid rgba(0,255,255,0.15); backdrop-filter: blur(10px); }
+        #toolbar { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 50; gap: 6px; padding: 8px 14px; border-radius: 12px; background: rgba(0,10,20,0.85); border: 1px solid rgba(0,255,255,0.15); backdrop-filter: blur(10px); display: none; }
         #toolbar.show { display: flex; }
         .tool { width: 40px; height: 40px; border: 1px solid rgba(0,255,255,0.2); border-radius: 8px; background: transparent; color: #00ffff; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; font-family: inherit; }
         .tool:hover { border-color: #00ffff; background: rgba(0,255,255,0.1); }
@@ -45,7 +42,7 @@
         .tool .lbl { font-size: 7px; position: absolute; bottom: 1px; }
 
         /* Color picker */
-        #colors { display: none; position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; gap: 6px; padding: 6px 10px; border-radius: 10px; background: rgba(0,10,20,0.85); border: 1px solid rgba(0,255,255,0.1); }
+        #colors { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 50; gap: 6px; padding: 6px 10px; border-radius: 10px; background: rgba(0,10,20,0.85); border: 1px solid rgba(0,255,255,0.1); display: none; }
         #colors.show { display: flex; }
         .swatch { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: all 0.2s; }
         .swatch:hover, .swatch.active { border-color: #fff; transform: scale(1.2); }
@@ -57,8 +54,10 @@
 </head>
 <body>
     <video id="localVideo" autoplay playsinline muted></video>
-    <canvas id="bg-canvas"></canvas>
-    <canvas id="wb-canvas"></canvas>
+    <div id="canvas-wrap" style="display:none;position:fixed;inset:0;z-index:0;">
+        <canvas id="bg-canvas" style="position:absolute;inset:0;"></canvas>
+        <canvas id="wb-canvas" style="position:absolute;inset:0;cursor:crosshair;"></canvas>
+    </div>
 
     <!-- Setup -->
     <div id="setup">
@@ -676,7 +675,7 @@
                     if (t.id === 'undo') { undoWB(); return; }
                     if (t.id === 'clear') { clearWB(); return; }
                     if (t.id === 'record') { toggleRecording(); btn.classList.toggle('active', S.recording); return; }
-                    if (t.id === 'menu') { S.active = false; S.wbCanvas.classList.remove('active'); document.getElementById('setup').style.display = 'block'; tb.classList.remove('show'); document.getElementById('colors').classList.remove('show'); return; }
+                    if (t.id === 'menu') { S.active = false; document.getElementById('canvas-wrap').style.display = 'none'; document.getElementById('setup').style.display = 'block'; tb.classList.remove('show'); document.getElementById('colors').classList.remove('show'); return; }
                     S.wbTool = t.id;
                     S.wbCanvas.style.cursor = t.id === 'pointer' ? 'default' : 'crosshair';
                     tb.querySelectorAll('.tool').forEach(function(b) { b.classList.toggle('active', b.dataset.tool === t.id); });
@@ -757,8 +756,8 @@
             // Start button
             document.getElementById('btn-start').onclick = function() {
                 document.getElementById('setup').style.display = 'none';
+                document.getElementById('canvas-wrap').style.display = 'block';
                 S.active = true;
-                S.wbCanvas.classList.add('active');
                 document.getElementById('toolbar').classList.add('show');
                 document.getElementById('colors').classList.add('show');
                 clearWB();
@@ -773,7 +772,7 @@
             window.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape' && S.active) {
                     S.active = false;
-                    S.wbCanvas.classList.remove('active');
+                    document.getElementById('canvas-wrap').style.display = 'none';
                     document.getElementById('setup').style.display = 'block';
                     document.getElementById('toolbar').classList.remove('show');
                     document.getElementById('colors').classList.remove('show');
