@@ -109,6 +109,24 @@
                 </div>
             </div>
 
+            <div class="section">
+                <div class="section-title">&#x1F4D0; ASPECT RATIO</div>
+                <div class="row">
+                    <button class="btn ratio-btn active" data-ratio="16:9">16:9 YouTube</button>
+                    <button class="btn ratio-btn" data-ratio="9:16">9:16 Reels</button>
+                    <button class="btn ratio-btn" data-ratio="1:1">1:1 Square</button>
+                    <button class="btn ratio-btn" data-ratio="4:3">4:3 Classic</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">&#x1F3F7; LOWER THIRD (Optional)</div>
+                <div class="row">
+                    <input class="btn" id="lt-title" placeholder="Title (e.g. Quadratic Equations)" style="text-align:left;flex:2;">
+                    <input class="btn" id="lt-subtitle" placeholder="Subtitle" style="text-align:left;flex:1;">
+                </div>
+            </div>
+
             <div style="text-align:center;margin-top:20px;">
                 <button class="btn primary" id="btn-start">&#x1F680; START TEACHING</button>
             </div>
@@ -173,13 +191,30 @@
             // Layout & style
             layout: 'presenter', bgStyle: 'hud',
             // Whiteboard
-            wbTool: 'pen', wbColor: '#00ffff', wbSize: 3,
-            wbDrawing: false, wbLastX: 0, wbLastY: 0,
+            wbTool: 'pen', wbColor: '#ffffff', wbSize: 5,
+            wbDrawing: false, wbPoints: [], // for smooth curves
             wbHistory: [], wbHistoryIdx: -1,
+            // Shape drawing
+            shapeType: null, shapeStart: null, shapePreview: null,
+            // Text tool
+            textInput: null,
             // Pointer
             pointerX: -100, pointerY: -100, pointerActive: false,
+            // Grid
+            gridMode: 'none', // 'none','grid','ruled','dotted'
+            // Aspect ratio
+            aspectRatio: '16:9',
+            contentRect: { x: 0, y: 0, w: 0, h: 0 },
+            // Pages
+            pages: [{ data: null, history: [], historyIdx: -1 }],
+            currentPage: 0,
+            // Lower third
+            lowerThird: { visible: false, title: '', subtitle: '', anim: 0 },
+            // Timer
+            showTimer: false, timerStart: 0,
             // Recording
             recording: false, mediaRecorder: null, recordedChunks: [], recordStart: 0,
+            recCountdown: 0, recCountdownStart: 0,
             // Pairing
             peer: null, pairCode: null,
             // Stars (for space bg)
@@ -198,8 +233,21 @@
         // UTILS
         // ═══════════════════════════════════════════════════════════
 
+        var RATIOS = { '16:9': 16/9, '9:16': 9/16, '1:1': 1, '4:3': 4/3 };
+        var MATH_SYMBOLS = ['\u221A','\u03B1','\u03B2','\u03C0','\u00B1','\u00B2','\u00B3','\u222B','\u2211','\u2260','\u2265','\u2264','\u221E','\u0394','\u03B8','\u2192','\u00D7','\u00F7','\u2234'];
+
         function lerp(a,b,t){return a+(b-a)*t;}
         function rand(a,b){return a+Math.random()*(b-a);}
+
+        function computeContentRect() {
+            var ratio = RATIOS[S.aspectRatio] || 16/9;
+            var cw, ch;
+            if (S.w / S.h > ratio) { ch = S.h; cw = ch * ratio; }
+            else { cw = S.w; ch = cw / ratio; }
+            // Slight padding
+            cw = Math.floor(cw * 0.96); ch = Math.floor(ch * 0.96);
+            S.contentRect = { x: Math.floor((S.w - cw) / 2), y: Math.floor((S.h - ch) / 2), w: cw, h: ch };
+        }
 
         // ═══════════════════════════════════════════════════════════
         // CAMERA & SOURCES
@@ -560,21 +608,25 @@
         }
 
         // ═══════════════════════════════════════════════════════════
-        // WHITEBOARD
+        // WHITEBOARD (Smooth Bezier strokes + shapes + text)
         // ═══════════════════════════════════════════════════════════
 
+        function getPageState() { return S.pages[S.currentPage]; }
+
         function saveWBState() {
+            var pg = getPageState();
             var data = S.wbCtx.getImageData(0, 0, S.w, S.h);
-            S.wbHistory = S.wbHistory.slice(0, S.wbHistoryIdx + 1);
-            S.wbHistory.push(data);
-            if (S.wbHistory.length > 30) S.wbHistory.shift();
-            S.wbHistoryIdx = S.wbHistory.length - 1;
+            pg.history = pg.history.slice(0, pg.historyIdx + 1);
+            pg.history.push(data);
+            if (pg.history.length > 20) pg.history.shift();
+            pg.historyIdx = pg.history.length - 1;
         }
 
         function undoWB() {
-            if (S.wbHistoryIdx > 0) {
-                S.wbHistoryIdx--;
-                S.wbCtx.putImageData(S.wbHistory[S.wbHistoryIdx], 0, 0);
+            var pg = getPageState();
+            if (pg.historyIdx > 0) {
+                pg.historyIdx--;
+                S.wbCtx.putImageData(pg.history[pg.historyIdx], 0, 0);
             }
         }
 
@@ -583,73 +635,276 @@
             saveWBState();
         }
 
+        function saveCurrentPage() {
+            var pg = getPageState();
+            pg.data = S.wbCtx.getImageData(0, 0, S.w, S.h);
+        }
+
+        function loadPage(idx) {
+            saveCurrentPage();
+            S.currentPage = idx;
+            if (idx >= S.pages.length) S.pages.push({ data: null, history: [], historyIdx: -1 });
+            var pg = S.pages[idx];
+            S.wbCtx.clearRect(0, 0, S.w, S.h);
+            if (pg.data) S.wbCtx.putImageData(pg.data, 0, 0);
+            if (pg.history.length === 0) saveWBState();
+        }
+
+        function nextPage() { loadPage(S.currentPage + 1); }
+        function prevPage() { if (S.currentPage > 0) loadPage(S.currentPage - 1); }
+
+        function setStrokeStyle(ctx, tool, color, size) {
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            if (tool === 'eraser') {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.strokeStyle = 'rgba(0,0,0,1)'; ctx.lineWidth = size * 4;
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = color; ctx.lineWidth = size;
+                ctx.shadowColor = color; ctx.shadowBlur = tool === 'highlight' ? 10 : 2;
+                if (tool === 'highlight') { ctx.globalAlpha = 0.35; ctx.lineWidth = size * 3; }
+            }
+        }
+
+        function resetCtx(ctx) {
+            ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'source-over';
+        }
+
+        function drawSmoothStroke(ctx, points, tool, color, size) {
+            if (points.length < 2) return;
+            ctx.save();
+            setStrokeStyle(ctx, tool, color, size);
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            if (points.length === 2) {
+                ctx.lineTo(points[1].x, points[1].y);
+            } else {
+                for (var i = 1; i < points.length - 1; i++) {
+                    var mx = (points[i].x + points[i + 1].x) / 2;
+                    var my = (points[i].y + points[i + 1].y) / 2;
+                    ctx.quadraticCurveTo(points[i].x, points[i].y, mx, my);
+                }
+                ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+            }
+            ctx.stroke();
+            resetCtx(ctx);
+            ctx.restore();
+        }
+
+        function drawShapeOnCtx(ctx, type, x1, y1, x2, y2, color, size) {
+            ctx.save();
+            ctx.strokeStyle = color; ctx.lineWidth = size; ctx.lineCap = 'round';
+            ctx.shadowColor = color; ctx.shadowBlur = 2;
+            switch (type) {
+                case 'line':
+                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+                    break;
+                case 'arrow':
+                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+                    var angle = Math.atan2(y2 - y1, x2 - x1);
+                    var hl = 16;
+                    ctx.beginPath();
+                    ctx.moveTo(x2, y2);
+                    ctx.lineTo(x2 - hl * Math.cos(angle - 0.4), y2 - hl * Math.sin(angle - 0.4));
+                    ctx.moveTo(x2, y2);
+                    ctx.lineTo(x2 - hl * Math.cos(angle + 0.4), y2 - hl * Math.sin(angle + 0.4));
+                    ctx.stroke();
+                    break;
+                case 'rect':
+                    ctx.strokeRect(Math.min(x1,x2), Math.min(y1,y2), Math.abs(x2-x1), Math.abs(y2-y1));
+                    break;
+                case 'circle':
+                    var r = Math.hypot(x2 - x1, y2 - y1);
+                    if (r > 0) { ctx.beginPath(); ctx.arc(x1, y1, r, 0, TAU); ctx.stroke(); }
+                    break;
+            }
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        }
+
+        function placeText(x, y) {
+            if (S.textInput) S.textInput.remove();
+            var inp = document.createElement('input');
+            inp.type = 'text'; inp.placeholder = 'Type...';
+            inp.style.cssText = 'position:fixed;z-index:60;background:rgba(0,20,40,0.9);border:1px solid #00ffff;color:' + S.wbColor + ';padding:6px 10px;font-family:' + F + ';font-size:' + (S.wbSize * 5) + 'px;outline:none;border-radius:4px;min-width:100px;left:' + x + 'px;top:' + y + 'px;';
+            document.body.appendChild(inp);
+            inp.focus();
+            S.textInput = inp;
+            function commit() {
+                var text = inp.value.trim();
+                if (text) {
+                    S.wbCtx.save();
+                    S.wbCtx.font = (S.wbSize * 5) + 'px ' + F;
+                    S.wbCtx.fillStyle = S.wbColor;
+                    S.wbCtx.shadowColor = S.wbColor; S.wbCtx.shadowBlur = 3;
+                    S.wbCtx.fillText(text, x, y + S.wbSize * 5);
+                    S.wbCtx.shadowBlur = 0;
+                    S.wbCtx.restore();
+                    saveWBState();
+                }
+                inp.remove(); S.textInput = null;
+            }
+            inp.addEventListener('keydown', function(e) { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { inp.remove(); S.textInput = null; } });
+            inp.addEventListener('blur', commit);
+        }
+
         function initWBInput() {
             var c = S.wbCanvas;
             c.addEventListener('mousedown', function(e) {
-                if (S.wbTool === 'pointer') { S.pointerActive = true; S.pointerX = e.clientX; S.pointerY = e.clientY; return; }
-                S.wbDrawing = true; S.wbLastX = e.clientX; S.wbLastY = e.clientY;
+                var x = e.clientX, y = e.clientY;
+                if (S.wbTool === 'pointer') { S.pointerActive = true; S.pointerX = x; S.pointerY = y; return; }
+                if (S.wbTool === 'text') { placeText(x, y); return; }
+                if (S.shapeType) {
+                    S.shapeStart = { x: x, y: y };
+                    S.wbDrawing = true;
+                    return;
+                }
+                S.wbDrawing = true;
+                S.wbPoints = [{ x: x, y: y }];
             });
             c.addEventListener('mousemove', function(e) {
-                if (S.wbTool === 'pointer') { S.pointerX = e.clientX; S.pointerY = e.clientY; return; }
+                var x = e.clientX, y = e.clientY;
+                if (S.wbTool === 'pointer') { S.pointerX = x; S.pointerY = y; return; }
                 if (!S.wbDrawing) return;
-                var ctx = S.wbCtx;
-                ctx.beginPath();
-                ctx.moveTo(S.wbLastX, S.wbLastY);
-                ctx.lineTo(e.clientX, e.clientY);
-                ctx.strokeStyle = S.wbTool === 'eraser' ? 'rgba(0,0,0,1)' : S.wbColor;
-                ctx.lineWidth = S.wbTool === 'eraser' ? S.wbSize * 4 : S.wbSize;
-                ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-                ctx.globalCompositeOperation = S.wbTool === 'eraser' ? 'destination-out' : 'source-over';
-                if (S.wbTool === 'pen' || S.wbTool === 'highlight') {
-                    ctx.shadowColor = S.wbColor; ctx.shadowBlur = S.wbTool === 'highlight' ? 12 : 4;
-                    if (S.wbTool === 'highlight') { ctx.globalAlpha = 0.4; ctx.lineWidth = S.wbSize * 3; }
+                if (S.shapeType && S.shapeStart) {
+                    S.shapePreview = { x: x, y: y };
+                    return;
                 }
-                ctx.stroke();
-                ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'source-over';
-                S.wbLastX = e.clientX; S.wbLastY = e.clientY;
+                S.wbPoints.push({ x: x, y: y });
+                // Draw incrementally for smoothness
+                if (S.wbPoints.length > 2) {
+                    var pts = S.wbPoints;
+                    var i = pts.length - 2;
+                    var ctx = S.wbCtx;
+                    ctx.save();
+                    setStrokeStyle(ctx, S.wbTool, S.wbColor, S.wbSize);
+                    ctx.beginPath();
+                    var prev = pts[i - 1], cur = pts[i], next = pts[i + 1];
+                    var mx1 = (prev.x + cur.x) / 2, my1 = (prev.y + cur.y) / 2;
+                    var mx2 = (cur.x + next.x) / 2, my2 = (cur.y + next.y) / 2;
+                    ctx.moveTo(mx1, my1);
+                    ctx.quadraticCurveTo(cur.x, cur.y, mx2, my2);
+                    ctx.stroke();
+                    resetCtx(ctx);
+                    ctx.restore();
+                }
             });
-            c.addEventListener('mouseup', function() {
+            c.addEventListener('mouseup', function(e) {
                 if (S.wbTool === 'pointer') { S.pointerActive = false; return; }
-                if (S.wbDrawing) { S.wbDrawing = false; saveWBState(); }
+                if (S.shapeType && S.shapeStart && S.shapePreview) {
+                    drawShapeOnCtx(S.wbCtx, S.shapeType, S.shapeStart.x, S.shapeStart.y, S.shapePreview.x, S.shapePreview.y, S.wbColor, S.wbSize);
+                    S.shapeStart = null; S.shapePreview = null;
+                    S.wbDrawing = false;
+                    saveWBState();
+                    return;
+                }
+                if (S.wbDrawing) { S.wbDrawing = false; S.wbPoints = []; saveWBState(); }
             });
-            c.addEventListener('mouseleave', function() { S.wbDrawing = false; S.pointerActive = false; });
+            c.addEventListener('mouseleave', function() { S.wbDrawing = false; S.pointerActive = false; S.wbPoints = []; S.shapePreview = null; });
         }
 
         // ═══════════════════════════════════════════════════════════
-        // RECORDING
+        // GRID / RULED LINES
+        // ═══════════════════════════════════════════════════════════
+
+        function drawGrid(ctx) {
+            if (S.gridMode === 'none') return;
+            var r = S.contentRect, step = 40;
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0,255,255,0.06)'; ctx.lineWidth = 1;
+            if (S.gridMode === 'grid') {
+                for (var x = r.x + step; x < r.x + r.w; x += step) { ctx.beginPath(); ctx.moveTo(x, r.y); ctx.lineTo(x, r.y + r.h); ctx.stroke(); }
+                for (var y = r.y + step; y < r.y + r.h; y += step) { ctx.beginPath(); ctx.moveTo(r.x, y); ctx.lineTo(r.x + r.w, y); ctx.stroke(); }
+            } else if (S.gridMode === 'ruled') {
+                for (var y = r.y + step; y < r.y + r.h; y += step) { ctx.beginPath(); ctx.moveTo(r.x + 10, y); ctx.lineTo(r.x + r.w - 10, y); ctx.stroke(); }
+            } else if (S.gridMode === 'dotted') {
+                ctx.fillStyle = 'rgba(0,255,255,0.08)';
+                for (var x = r.x + step; x < r.x + r.w; x += step) {
+                    for (var y = r.y + step; y < r.y + r.h; y += step) {
+                        ctx.fillRect(x - 1, y - 1, 2, 2);
+                    }
+                }
+            }
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // LOWER THIRD
+        // ═══════════════════════════════════════════════════════════
+
+        function drawLowerThird(ctx) {
+            var lt = S.lowerThird;
+            if (lt.anim <= 0 && !lt.visible) return;
+            // Animate
+            lt.anim += lt.visible ? 0.04 : -0.04;
+            lt.anim = Math.max(0, Math.min(1, lt.anim));
+            if (lt.anim <= 0) return;
+
+            var r = S.contentRect;
+            var barH = 56, barW = r.w * 0.5 * lt.anim;
+            var bx = r.x + 30, by = r.y + r.h - barH - 30;
+
+            ctx.save();
+            // Background
+            ctx.fillStyle = 'rgba(0,10,25,0.85)';
+            ctx.fillRect(bx, by, barW, barH);
+            // Left accent stripe
+            ctx.fillStyle = '#00ffff';
+            ctx.fillRect(bx, by, 4, barH);
+            // Title
+            if (lt.anim > 0.5) {
+                var textAlpha = (lt.anim - 0.5) * 2;
+                ctx.globalAlpha = textAlpha;
+                ctx.font = 'bold 16px ' + F;
+                ctx.fillStyle = '#ffffff';
+                ctx.textAlign = 'left';
+                ctx.fillText(lt.title, bx + 16, by + 24);
+                ctx.font = '11px ' + F;
+                ctx.fillStyle = 'rgba(0,255,255,0.7)';
+                ctx.fillText(lt.subtitle, bx + 16, by + 42);
+            }
+            ctx.restore();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // RECORDING (with countdown + crop to content rect)
         // ═══════════════════════════════════════════════════════════
 
         function toggleRecording() {
             if (S.recording) {
                 S.mediaRecorder.stop(); S.recording = false;
-            } else {
-                // Capture both canvases composited
-                var combined = document.createElement('canvas');
-                combined.width = S.w; combined.height = S.h;
-                var cctx = combined.getContext('2d');
-                // Create a stream from compositing loop
-                var stream = combined.captureStream(30);
-                try { S.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' }); }
-                catch(e) { S.mediaRecorder = new MediaRecorder(stream); }
-                S.recordedChunks = [];
-                S.mediaRecorder.ondataavailable = function(e) { if (e.data.size > 0) S.recordedChunks.push(e.data); };
-                S.mediaRecorder.onstop = function() {
-                    var blob = new Blob(S.recordedChunks, { type: 'video/webm' });
-                    var url = URL.createObjectURL(blob);
-                    var a = document.createElement('a'); a.href = url; a.download = 'teach-' + Date.now() + '.webm';
-                    a.click(); URL.revokeObjectURL(url);
-                };
-                S.mediaRecorder.start(100);
-                S.recording = true; S.recordStart = performance.now();
-                // Composite loop
-                function compLoop() {
-                    if (!S.recording) return;
-                    cctx.drawImage(S.bgCanvas, 0, 0);
-                    cctx.drawImage(S.wbCanvas, 0, 0);
-                    requestAnimationFrame(compLoop);
-                }
-                compLoop();
+                return;
             }
+            // Start countdown
+            S.recCountdown = 3; S.recCountdownStart = performance.now();
+        }
+
+        function startRecordingAfterCountdown() {
+            var r = S.contentRect;
+            var combined = document.createElement('canvas');
+            combined.width = r.w; combined.height = r.h;
+            var cctx = combined.getContext('2d');
+            var stream = combined.captureStream(30);
+            try { S.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' }); }
+            catch(e) { try { S.mediaRecorder = new MediaRecorder(stream); } catch(e2) { return; } }
+            S.recordedChunks = [];
+            S.mediaRecorder.ondataavailable = function(e) { if (e.data.size > 0) S.recordedChunks.push(e.data); };
+            S.mediaRecorder.onstop = function() {
+                var blob = new Blob(S.recordedChunks, { type: 'video/webm' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a'); a.href = url;
+                a.download = 'teach-' + S.aspectRatio.replace(':','x') + '-' + Date.now() + '.webm';
+                a.click(); URL.revokeObjectURL(url);
+            };
+            S.mediaRecorder.start(100);
+            S.recording = true; S.recordStart = performance.now();
+            function compLoop() {
+                if (!S.recording) return;
+                cctx.drawImage(S.bgCanvas, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+                cctx.drawImage(S.wbCanvas, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+                requestAnimationFrame(compLoop);
+            }
+            compLoop();
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -659,43 +914,146 @@
         function buildToolbar() {
             var tb = document.getElementById('toolbar');
             tb.innerHTML = '';
-            var tools = [
-                { id: 'pen', icon: '&#x270F;', label: 'Pen' },
-                { id: 'highlight', icon: '&#x1F58C;', label: 'Highlight' },
-                { id: 'eraser', icon: '&#x1F9F9;', label: 'Erase' },
-                { id: 'pointer', icon: '&#x1F534;', label: 'Pointer' },
-                { id: 'undo', icon: '&#x21A9;', label: 'Undo' },
-                { id: 'clear', icon: '&#x1F5D1;', label: 'Clear' },
-                { id: 'record', icon: '&#x23FA;', label: 'Record' },
-                { id: 'menu', icon: '&#x2630;', label: 'Menu' },
-            ];
-            tools.forEach(function(t) {
+
+            function addBtn(icon, title, cls, onclick) {
                 var btn = document.createElement('button');
-                btn.className = 'tool' + (t.id === S.wbTool ? ' active' : '');
-                btn.innerHTML = t.icon;
-                btn.title = t.label;
-                btn.dataset.tool = t.id;
-                btn.onclick = function() {
-                    if (t.id === 'undo') { undoWB(); return; }
-                    if (t.id === 'clear') { clearWB(); return; }
-                    if (t.id === 'record') { toggleRecording(); btn.classList.toggle('active', S.recording); return; }
-                    if (t.id === 'menu') { S.active = false; document.getElementById('canvas-wrap').style.display = 'none'; document.getElementById('setup').style.display = 'block'; tb.classList.remove('show'); document.getElementById('colors').classList.remove('show'); return; }
-                    S.wbTool = t.id;
-                    S.wbCanvas.style.cursor = t.id === 'pointer' ? 'default' : 'crosshair';
-                    tb.querySelectorAll('.tool').forEach(function(b) { b.classList.toggle('active', b.dataset.tool === t.id); });
-                };
+                btn.className = 'tool' + (cls ? ' ' + cls : '');
+                btn.innerHTML = icon; btn.title = title;
+                btn.onclick = onclick;
                 tb.appendChild(btn);
+                return btn;
+            }
+            function addSep() { var d = document.createElement('div'); d.style.cssText = 'width:1px;background:rgba(0,255,255,0.1);margin:4px 2px;'; tb.appendChild(d); }
+
+            // Drawing tools
+            var drawTools = [
+                { id: 'pen', icon: '\u270F', label: 'Pen' },
+                { id: 'highlight', icon: '\uD83D\uDD8C', label: 'Highlight' },
+                { id: 'eraser', icon: '\uD83E\uDDF9', label: 'Eraser' },
+                { id: 'text', icon: 'T', label: 'Text' },
+                { id: 'pointer', icon: '\uD83D\uDD34', label: 'Pointer' },
+            ];
+            drawTools.forEach(function(t) {
+                addBtn(t.icon, t.label, S.wbTool === t.id ? 'active' : '', function() {
+                    S.wbTool = t.id; S.shapeType = null;
+                    tb.querySelectorAll('.tool').forEach(function(b) { b.classList.remove('active'); });
+                    this.classList.add('active');
+                });
             });
 
-            // Colors
+            addSep();
+
+            // Shapes
+            var shapes = [
+                { id: 'line', icon: '\u2571', label: 'Line' },
+                { id: 'arrow', icon: '\u2192', label: 'Arrow' },
+                { id: 'rect', icon: '\u25A1', label: 'Rectangle' },
+                { id: 'circle', icon: '\u25CB', label: 'Circle' },
+            ];
+            shapes.forEach(function(sh) {
+                addBtn(sh.icon, sh.label, S.shapeType === sh.id ? 'active' : '', function() {
+                    S.shapeType = sh.id; S.wbTool = 'shape';
+                    tb.querySelectorAll('.tool').forEach(function(b) { b.classList.remove('active'); });
+                    this.classList.add('active');
+                });
+            });
+
+            addSep();
+
+            // Size buttons
+            [{ s: 2, l: 'S' }, { s: 5, l: 'M' }, { s: 10, l: 'L' }].forEach(function(sz) {
+                addBtn(sz.l, sz.l + ' (' + sz.s + 'px)', S.wbSize === sz.s ? 'active' : '', function() {
+                    S.wbSize = sz.s;
+                    tb.querySelectorAll('.tool').forEach(function(b) { if (['S','M','L'].indexOf(b.innerHTML) >= 0) b.classList.remove('active'); });
+                    this.classList.add('active');
+                });
+            });
+
+            addSep();
+
+            // Grid toggle
+            addBtn('#', 'Grid (' + S.gridMode + ')', '', function() {
+                var modes = ['none', 'grid', 'ruled', 'dotted'];
+                S.gridMode = modes[(modes.indexOf(S.gridMode) + 1) % modes.length];
+                this.title = 'Grid (' + S.gridMode + ')';
+                this.classList.toggle('active', S.gridMode !== 'none');
+            });
+
+            // Pages
+            addBtn('\u25C0', 'Prev page', '', function() { prevPage(); });
+            var pageLabel = document.createElement('span');
+            pageLabel.id = 'page-label';
+            pageLabel.style.cssText = 'color:rgba(0,255,255,0.5);font-size:9px;display:flex;align-items:center;padding:0 4px;';
+            pageLabel.textContent = (S.currentPage + 1) + '/' + S.pages.length;
+            tb.appendChild(pageLabel);
+            addBtn('\u25B6', 'Next page', '', function() { nextPage(); });
+            addBtn('+', 'New page', '', function() {
+                S.pages.push({ data: null, history: [], historyIdx: -1 });
+                loadPage(S.pages.length - 1);
+            });
+
+            addSep();
+
+            // Math symbols
+            addBtn('\u03C0', 'Math symbols', '', function() {
+                var panel = document.getElementById('math-panel');
+                if (panel) { panel.remove(); return; }
+                panel = document.createElement('div');
+                panel.id = 'math-panel';
+                panel.style.cssText = 'position:fixed;bottom:74px;left:50%;transform:translateX(-50%);z-index:60;display:flex;flex-wrap:wrap;gap:4px;padding:8px;border-radius:8px;background:rgba(0,10,20,0.9);border:1px solid rgba(0,255,255,0.15);max-width:400px;';
+                MATH_SYMBOLS.forEach(function(sym) {
+                    var b = document.createElement('button');
+                    b.textContent = sym;
+                    b.style.cssText = 'background:rgba(0,30,60,0.6);border:1px solid rgba(0,255,255,0.2);color:#00ffff;width:36px;height:36px;font-size:18px;cursor:pointer;border-radius:4px;font-family:serif;';
+                    b.onclick = function() { S.wbTool = 'text'; placeText(S.w / 2 - 20, S.h / 2); if (S.textInput) S.textInput.value = sym; panel.remove(); };
+                    panel.appendChild(b);
+                });
+                document.body.appendChild(panel);
+            });
+
+            // Lower third toggle
+            addBtn('\u2261', 'Lower third', S.lowerThird.visible ? 'active' : '', function() {
+                S.lowerThird.visible = !S.lowerThird.visible;
+                this.classList.toggle('active', S.lowerThird.visible);
+            });
+
+            // Timer
+            addBtn('\u23F1', 'Timer', S.showTimer ? 'active' : '', function() {
+                S.showTimer = !S.showTimer;
+                if (S.showTimer) S.timerStart = performance.now();
+                this.classList.toggle('active', S.showTimer);
+            });
+
+            addSep();
+
+            // Undo / Clear
+            addBtn('\u21A9', 'Undo', '', undoWB);
+            addBtn('\uD83D\uDDD1', 'Clear', '', clearWB);
+
+            // Record
+            addBtn('\u23FA', 'Record (3-2-1)', '', function() {
+                toggleRecording();
+                this.classList.toggle('active', S.recording || S.recCountdown > 0);
+            });
+
+            // Menu
+            addBtn('\u2630', 'Menu', '', function() {
+                S.active = false;
+                document.getElementById('canvas-wrap').style.display = 'none';
+                document.getElementById('setup').style.display = 'block';
+                tb.classList.remove('show');
+                document.getElementById('colors').classList.remove('show');
+            });
+
+            // Colors bar
             var cp = document.getElementById('colors');
             cp.innerHTML = '';
-            var colors = ['#00ffff','#ffaa00','#ff3355','#00ff88','#ff00ff','#ffffff','#ffdd00','#0088ff'];
+            var colors = ['#ffffff','#00ffff','#ffaa00','#ff3355','#00ff88','#ff00ff','#ffdd00','#0088ff','#ff6600'];
             colors.forEach(function(c) {
                 var sw = document.createElement('div');
                 sw.className = 'swatch' + (c === S.wbColor ? ' active' : '');
                 sw.style.background = c;
-                sw.onclick = function() { S.wbColor = c; cp.querySelectorAll('.swatch').forEach(function(s){s.classList.remove('active');}); sw.classList.add('active'); };
+                sw.onclick = function() { S.wbColor = c; cp.querySelectorAll('.swatch').forEach(function(s) { s.classList.remove('active'); }); sw.classList.add('active'); };
                 cp.appendChild(sw);
             });
         }
@@ -711,8 +1069,60 @@
             if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
 
             drawBG(ctx, w, h, ts);
+            drawGrid(ctx);
             drawContent(ctx, w, h);
+            drawLowerThird(ctx);
             drawHUD(ctx, w, h, ts);
+
+            // Letterbox bars
+            var r = S.contentRect;
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            if (r.y > 0) { ctx.fillRect(0, 0, w, r.y); ctx.fillRect(0, r.y + r.h, w, h - r.y - r.h); }
+            if (r.x > 0) { ctx.fillRect(0, r.y, r.x, r.h); ctx.fillRect(r.x + r.w, r.y, w - r.x - r.w, r.h); }
+            // Content border
+            ctx.strokeStyle = 'rgba(0,255,255,0.15)'; ctx.lineWidth = 1;
+            ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+            // Timer display
+            if (S.showTimer) {
+                var elapsed = Math.floor((ts - S.timerStart) / 1000);
+                var mm = Math.floor(elapsed / 60), ss = elapsed % 60;
+                ctx.save();
+                ctx.fillStyle = 'rgba(0,10,20,0.6)';
+                ctx.fillRect(r.x + 8, r.y + 8, 64, 22);
+                ctx.font = '12px ' + F; ctx.fillStyle = '#00ffff'; ctx.textAlign = 'left';
+                ctx.fillText((mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss, r.x + 14, r.y + 24);
+                ctx.restore();
+            }
+
+            // Shape preview (drawn on bg canvas, temporary)
+            if (S.shapeType && S.shapeStart && S.shapePreview) {
+                drawShapeOnCtx(ctx, S.shapeType, S.shapeStart.x, S.shapeStart.y, S.shapePreview.x, S.shapePreview.y, S.wbColor, S.wbSize);
+            }
+
+            // Recording countdown
+            if (S.recCountdown > 0) {
+                var elapsed = (ts - S.recCountdownStart) / 1000;
+                var num = Math.ceil(3 - elapsed);
+                if (num <= 0) {
+                    S.recCountdown = 0;
+                    startRecordingAfterCountdown();
+                } else {
+                    S.recCountdown = num;
+                    var scale = 1 + (1 - (elapsed % 1)) * 0.3;
+                    ctx.save();
+                    ctx.globalAlpha = 0.5 + (1 - (elapsed % 1)) * 0.5;
+                    ctx.font = 'bold ' + Math.floor(80 * scale) + 'px ' + F;
+                    ctx.fillStyle = '#ff3355'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.shadowColor = '#ff3355'; ctx.shadowBlur = 30;
+                    ctx.fillText(num, w / 2, h / 2);
+                    ctx.restore();
+                }
+            }
+
+            // Update page label
+            var pl = document.getElementById('page-label');
+            if (pl) pl.textContent = (S.currentPage + 1) + '/' + S.pages.length;
 
             requestAnimationFrame(renderLoop);
         }
@@ -757,13 +1167,30 @@
                 };
             });
 
+            // Aspect ratio buttons
+            document.querySelectorAll('.ratio-btn').forEach(function(btn) {
+                btn.onclick = function() {
+                    S.aspectRatio = btn.dataset.ratio;
+                    computeContentRect();
+                    document.querySelectorAll('.ratio-btn').forEach(function(b){b.classList.remove('active');});
+                    btn.classList.add('active');
+                };
+            });
+
             // Start button
             document.getElementById('btn-start').onclick = function() {
+                // Grab lower third values
+                S.lowerThird.title = document.getElementById('lt-title').value || '';
+                S.lowerThird.subtitle = document.getElementById('lt-subtitle').value || '';
+                if (S.lowerThird.title) S.lowerThird.visible = true;
+
                 document.getElementById('setup').style.display = 'none';
                 document.getElementById('canvas-wrap').style.display = 'block';
+                computeContentRect();
                 S.active = true;
                 document.getElementById('toolbar').classList.add('show');
                 document.getElementById('colors').classList.add('show');
+                buildToolbar(); // rebuild with current state
                 clearWB();
             };
         }
@@ -802,13 +1229,13 @@
             function resize() {
                 S.w = window.innerWidth; S.h = window.innerHeight;
                 S.bgCanvas.width = S.w; S.bgCanvas.height = S.h;
-                // Preserve whiteboard on resize
                 var imgData = null;
                 if (S.wbCanvas.width > 0) {
                     try { imgData = S.wbCtx.getImageData(0, 0, S.wbCanvas.width, S.wbCanvas.height); } catch(e) {}
                 }
                 S.wbCanvas.width = S.w; S.wbCanvas.height = S.h;
                 if (imgData) S.wbCtx.putImageData(imgData, 0, 0);
+                computeContentRect();
             }
             window.addEventListener('resize', resize);
             resize();
