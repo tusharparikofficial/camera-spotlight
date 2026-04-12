@@ -97,6 +97,7 @@
                 <div class="row">
                     <button class="btn" id="btn-pair-device"><span class="icon">&#x1F4F1;</span>Pair iPad/Phone</button>
                     <button class="btn" id="btn-screen-share"><span class="icon">&#x1F5A5;</span>Share Screen</button>
+                    <button class="btn" id="btn-load-pdf"><span class="icon">&#x1F4C4;</span>Load PDF</button>
                     <button class="btn" id="btn-no-content"><span class="icon">&#x2716;</span>No Content Source</button>
                 </div>
                 <div class="status" id="content-status">No content source</div>
@@ -202,11 +203,27 @@
         </div>
     </div>
 
+    <!-- PDF Viewer (draggable, resizable DOM overlay - captured via drawImage on the embed) -->
+    <div id="pdf-panel" style="display:none;position:fixed;z-index:45;border:2px solid rgba(0,255,255,0.3);border-radius:8px;overflow:hidden;background:#000;box-shadow:0 0 30px rgba(0,255,255,0.15);resize:both;">
+        <div id="pdf-titlebar" style="background:rgba(0,15,30,0.9);padding:6px 12px;cursor:move;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:10px;color:#00ffff;letter-spacing:1px;" id="pdf-name">PDF</span>
+            <div>
+                <button id="pdf-prev" style="background:none;border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:10px;border-radius:3px;margin:0 2px;">&#x25C0; Prev</button>
+                <span id="pdf-page-label" style="font-size:10px;color:rgba(0,255,255,0.5);margin:0 4px;">1/1</span>
+                <button id="pdf-next" style="background:none;border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:10px;border-radius:3px;margin:0 2px;">Next &#x25B6;</button>
+                <button id="pdf-close" style="background:none;border:1px solid rgba(255,60,60,0.3);color:#ff5555;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:10px;border-radius:3px;margin-left:8px;">&#x2715;</button>
+            </div>
+        </div>
+        <canvas id="pdf-canvas" style="width:100%;background:#222;"></canvas>
+    </div>
+    <input type="file" id="pdf-file-input" accept=".pdf" style="display:none;">
+
     <!-- Teleprompter (not captured in recording - pure DOM overlay) -->
     <div id="teleprompter" style="display:none;position:fixed;top:0;left:0;right:0;z-index:55;height:80px;background:linear-gradient(to bottom,rgba(0,0,0,0.85),transparent);overflow:hidden;pointer-events:none;">
         <div id="tp-text" style="color:rgba(255,255,255,0.7);font-size:18px;font-family:'Courier New',monospace;padding:10px 60px;white-space:nowrap;transform:translateX(100%);"></div>
     </div>
 
+    <script src="lib/pdfjs/pdf.min.js"></script>
     <script src="lib/qrcode/qrcode.min.js"></script>
     <script src="lib/peerjs/peerjs.min.js"></script>
     <script src="lib/selfie_seg/selfie_segmentation.js"></script>
@@ -1157,10 +1174,16 @@
         }
 
         function processSegFrame() {
-            if (!S.bgRemoval || !S.segmentation || !S.localVideo || S.localVideo.readyState < 2) return;
+            if (!S.bgRemoval || !S.segmentation) return;
+            // Wait for video to be ready
+            if (!S.localVideo || S.localVideo.readyState < 2) {
+                if (S.bgRemoval) setTimeout(processSegFrame, 200);
+                return;
+            }
             S.segmentation.send({ image: S.localVideo }).then(function() {
                 if (S.bgRemoval) setTimeout(processSegFrame, 80);
-            }).catch(function() {
+            }).catch(function(e) {
+                console.warn('Seg frame error:', e);
                 if (S.bgRemoval) setTimeout(processSegFrame, 500);
             });
         }
@@ -1329,6 +1352,83 @@
         }
 
         // ═══════════════════════════════════════════════════════════
+        // PDF VIEWER
+        // ═══════════════════════════════════════════════════════════
+
+        var pdfDoc = null, pdfPage = 1, pdfTotalPages = 0;
+
+        function initPDF() {
+            if (typeof pdfjsLib !== 'undefined') {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdfjs/pdf.worker.min.js';
+            }
+
+            // Make PDF panel draggable
+            var panel = document.getElementById('pdf-panel');
+            var titlebar = document.getElementById('pdf-titlebar');
+            var dragOff = { x: 0, y: 0 }, isDragging = false;
+            titlebar.addEventListener('mousedown', function(e) {
+                isDragging = true;
+                dragOff.x = e.clientX - panel.offsetLeft;
+                dragOff.y = e.clientY - panel.offsetTop;
+                e.preventDefault();
+            });
+            document.addEventListener('mousemove', function(e) {
+                if (!isDragging) return;
+                panel.style.left = (e.clientX - dragOff.x) + 'px';
+                panel.style.top = (e.clientY - dragOff.y) + 'px';
+            });
+            document.addEventListener('mouseup', function() { isDragging = false; });
+
+            document.getElementById('pdf-prev').onclick = function() { if (pdfPage > 1) { pdfPage--; renderPDFPage(); } };
+            document.getElementById('pdf-next').onclick = function() { if (pdfPage < pdfTotalPages) { pdfPage++; renderPDFPage(); } };
+            document.getElementById('pdf-close').onclick = function() { document.getElementById('pdf-panel').style.display = 'none'; };
+
+            document.getElementById('pdf-file-input').addEventListener('change', function(e) {
+                var file = e.target.files[0];
+                if (!file) return;
+                document.getElementById('pdf-name').textContent = file.name;
+                var reader = new FileReader();
+                reader.onload = function(ev) { loadPDFData(new Uint8Array(ev.target.result)); };
+                reader.readAsArrayBuffer(file);
+                e.target.value = '';
+            });
+        }
+
+        function loadPDFData(data) {
+            if (typeof pdfjsLib === 'undefined') { alert('PDF.js not loaded'); return; }
+            pdfjsLib.getDocument({ data: data }).promise.then(function(pdf) {
+                pdfDoc = pdf;
+                pdfTotalPages = pdf.numPages;
+                pdfPage = 1;
+                var panel = document.getElementById('pdf-panel');
+                panel.style.display = 'block';
+                panel.style.left = '50px'; panel.style.top = '60px';
+                panel.style.width = '500px'; panel.style.height = 'auto';
+                renderPDFPage();
+            }).catch(function(e) {
+                console.error('PDF load failed:', e);
+                alert('Failed to load PDF: ' + e.message);
+            });
+        }
+
+        function renderPDFPage() {
+            if (!pdfDoc) return;
+            pdfDoc.getPage(pdfPage).then(function(page) {
+                var canvas = document.getElementById('pdf-canvas');
+                var ctx = canvas.getContext('2d');
+                var viewport = page.getViewport({ scale: 1.5 });
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                page.render({ canvasContext: ctx, viewport: viewport });
+                document.getElementById('pdf-page-label').textContent = pdfPage + '/' + pdfTotalPages;
+            });
+        }
+
+        function openPDFPicker() {
+            document.getElementById('pdf-file-input').click();
+        }
+
+        // ═══════════════════════════════════════════════════════════
         // TOOLBAR
         // ═══════════════════════════════════════════════════════════
 
@@ -1472,6 +1572,9 @@
                 var q = prompt('Enter question:', 'Solve: x\u00B2 + 5x + 6 = 0');
                 if (q) { startQuiz(q, 30); this.classList.add('active'); }
             });
+
+            // PDF
+            addBtn('\uD83D\uDCC4', 'Load PDF', '', openPDFPicker);
 
             // Teleprompter
             addBtn('\u23E9', 'Teleprompter', S.tpActive ? 'active' : '', function() {
@@ -1639,6 +1742,7 @@
                     btn.classList.add('active');
                 };
             });
+            document.getElementById('btn-load-pdf').onclick = function() { openPDFPicker(); };
             document.getElementById('btn-pair-device').onclick = function() { startPairing(); };
             document.getElementById('btn-screen-share').onclick = function() { startScreenShare(); };
             document.getElementById('btn-no-content').onclick = function() {
@@ -1753,6 +1857,7 @@
             initWBInput();
             buildToolbar();
             initKeyboard();
+            initPDF();
 
             if (S.isMobile) {
                 initMobileUI();
