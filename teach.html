@@ -59,6 +59,10 @@
         <canvas id="wb-canvas" style="position:absolute;inset:0;cursor:crosshair;"></canvas>
     </div>
 
+    <!-- Toolbar + Colors (built dynamically by JS) -->
+    <div id="toolbar"></div>
+    <div id="colors"></div>
+
     <!-- Setup -->
     <div id="setup">
         <div class="setup-inner">
@@ -793,7 +797,7 @@
             S.bgCanvas = document.getElementById('bg-canvas');
             S.bgCtx = S.bgCanvas.getContext('2d');
             S.wbCanvas = document.getElementById('wb-canvas');
-            S.wbCtx = S.wbCanvas.getContext('2d');
+            S.wbCtx = S.wbCanvas.getContext('2d', { willReadFrequently: true });
 
             function resize() {
                 S.w = window.innerWidth; S.h = window.innerHeight;
