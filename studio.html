@@ -175,7 +175,8 @@
             remoteVideo: null, usingRemote: false,
             // Segmentation
             seg: null, segMask: null,
-            segCanvas: null, segCtx: null,
+            maskCanvas: null, maskCtx: null,
+            segCanvas: null, segCtx: null, segW: 0, segH: 0,
             // Settings
             bgMode: 'none', // none, blur, remove, space, gradient, classroom
             blurAmount: 12,
@@ -209,44 +210,71 @@
                 S.seg = new SelfieSegmentation({ locateFile: function(f) { return 'lib/selfie_seg/' + f; } });
                 S.seg.setOptions({ modelSelection: 1 });
                 S.seg.onResults(function(results) {
-                    // Store the mask canvas - DON'T composite here (that freezes person)
-                    // The mask is a canvas element we can reuse directly
-                    S.segMask = results.segmentationMask;
+                    // Store a smoothed copy of the mask (not the raw one which gets recycled)
+                    var mask = results.segmentationMask;
+                    if (!S.maskCanvas) {
+                        S.maskCanvas = document.createElement('canvas');
+                        S.maskCtx = S.maskCanvas.getContext('2d');
+                    }
+                    var mw = mask.width || 256, mh = mask.height || 144;
+                    S.maskCanvas.width = mw; S.maskCanvas.height = mh;
+                    // Draw mask with slight blur for edge feathering
+                    S.maskCtx.filter = 'blur(4px)';
+                    S.maskCtx.drawImage(mask, 0, 0, mw, mh);
+                    S.maskCtx.filter = 'none';
+                    // Boost contrast on mask to tighten edges after blur
+                    S.maskCtx.globalCompositeOperation = 'source-atop';
+                    S.maskCtx.fillStyle = 'rgba(255,255,255,0.3)';
+                    S.maskCtx.fillRect(0, 0, mw, mh);
+                    S.maskCtx.globalCompositeOperation = 'source-over';
+                    S.segMask = S.maskCanvas;
                 });
-                // Temp canvas for compositing in render loop
+                // Compositing canvases (created once, resized only when needed)
                 S.segCanvas = document.createElement('canvas');
                 S.segCtx = S.segCanvas.getContext('2d');
+                S.segW = 0; S.segH = 0;
             } catch(e) { console.warn('Seg init failed:', e); }
         }
 
         function processSegLoop() {
-            // Only run segmentation when bg mode needs it
             if (S.bgMode === 'none') { setTimeout(processSegLoop, 300); return; }
             var vid = getActiveVideo();
             if (!vid || vid.readyState < 2) { setTimeout(processSegLoop, 200); return; }
             if (S.seg) {
                 S.seg.send({ image: vid }).then(function() {
-                    // Run again - seg model naturally throttles itself
                     if (S.active) requestAnimationFrame(processSegLoop);
                 }).catch(function() { if (S.active) setTimeout(processSegLoop, 500); });
             }
         }
 
-        // Composite LIVE video clipped to person mask (called every render frame)
+        // Composite LIVE video clipped to person mask (60fps, live video)
         function drawPersonFromLiveVideo(ctx, vid, dx, dy, dw, dh, mirror) {
             if (!S.segMask) return;
-            var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
-            S.segCanvas.width = dw; S.segCanvas.height = dh;
+            // Resize compositing canvas only when dimensions change
+            var iw = Math.round(dw), ih = Math.round(dh);
+            if (S.segW !== iw || S.segH !== ih) {
+                S.segCanvas.width = iw; S.segCanvas.height = ih;
+                S.segW = iw; S.segH = ih;
+            }
             var sc = S.segCtx;
-            sc.clearRect(0, 0, dw, dh);
-            // Draw LIVE video (not stale person canvas)
-            if (mirror) { sc.save(); sc.translate(dw, 0); sc.scale(-1, 1); sc.drawImage(vid, 0, 0, dw, dh); sc.restore(); }
-            else { sc.drawImage(vid, 0, 0, dw, dh); }
-            // Apply mask to cut out background (keep person)
-            sc.globalCompositeOperation = 'destination-in';
-            sc.drawImage(S.segMask, 0, 0, dw, dh);
+            sc.clearRect(0, 0, iw, ih);
+
+            // Step 1: Draw smoothed mask as alpha channel
             sc.globalCompositeOperation = 'source-over';
-            // Draw composited result
+            sc.drawImage(S.segMask, 0, 0, iw, ih);
+
+            // Step 2: Draw LIVE video only where mask is white (person)
+            sc.globalCompositeOperation = 'source-in';
+            if (mirror) {
+                sc.save(); sc.translate(iw, 0); sc.scale(-1, 1);
+                sc.drawImage(vid, 0, 0, iw, ih);
+                sc.restore();
+            } else {
+                sc.drawImage(vid, 0, 0, iw, ih);
+            }
+            sc.globalCompositeOperation = 'source-over';
+
+            // Draw composited result onto main canvas
             ctx.drawImage(S.segCanvas, dx, dy);
         }
 
