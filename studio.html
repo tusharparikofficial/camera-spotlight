@@ -188,7 +188,7 @@
             stars: [],
             // Pairing
             peer: null,
-            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
             mobileFacing: 'user',
             // FPS
             fps: 0, frameCount: 0, lastFpsTime: 0,

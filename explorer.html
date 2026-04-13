@@ -889,7 +889,7 @@
         }
 
         function init() {
-            var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+            var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
             if (isMobile) { initMobileUI(); return; }
             startApp();
         }

@@ -139,7 +139,7 @@
             // Pairing
             peer: null, pairCode: null, remoteConnected: false,
             remoteVideo: null, localCamera: null, usingRemoteCamera: false,
-            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
             // Mouse
             mouseY: 0,
             // Effects

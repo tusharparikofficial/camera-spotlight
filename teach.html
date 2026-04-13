@@ -298,7 +298,7 @@
             fps: 0, frameCount: 0, lastFpsTime: 0,
             // Teaching active
             active: false,
-            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
+            isMobile: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
             mobileShareMode: 'camera', // 'camera' or 'screen'
             mobileFacing: 'user', // 'user' (front) or 'environment' (back)
         };
@@ -1897,7 +1897,13 @@
             initKeyboard();
             initPDF();
 
-            if (S.isMobile) {
+            // Check for auto-pair from QR scan FIRST (works on any device including iPad)
+            var params = new URLSearchParams(window.location.search);
+            var pairCode = params.get('pair');
+            if (pairCode && pairCode.length === 6) {
+                // Device scanned a QR code - go straight to pairing UI
+                initMobileUI();
+            } else if (S.isMobile) {
                 initMobileUI();
             } else {
                 initSetup();
