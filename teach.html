@@ -287,7 +287,7 @@
             quizActive: false, quizQuestion: '', quizTimer: 0, quizTimerStart: 0, quizRevealed: false,
             // Camera display mode (switchable during recording)
             camMode: 'full', // 'full' = background, 'pip' = circle bottom-right
-            pipSize: 160, pipMargin: 20,
+            pipSize: 160, pipX: 0, pipY: 0, pipDragging: false, pipDragOff: {x:0,y:0},
             // Beauty filter
             beautyOn: false, beautySoftness: 8,
             // Remote drawing state
@@ -841,21 +841,20 @@
             }
         }
 
-        // Draw camera as circular PiP in corner
+        // Draw camera as circular PiP — draggable, resizable
         function drawCamPiP(ctx, w, h) {
             if (S.camMode !== 'pip' || !S.hasLocalCam) return;
             var vid = S.localVideo;
             if (!vid || vid.readyState < 2) return;
+            // Default position if not set
+            if (S.pipX === 0 && S.pipY === 0) { S.pipX = w - S.pipSize / 2 - 24; S.pipY = h - S.pipSize / 2 - 80; }
             var r = S.pipSize / 2;
-            var cx = w - r - S.pipMargin;
-            var cy = h - r - S.pipMargin - 60; // above toolbar
+            var cx = S.pipX, cy = S.pipY;
 
             ctx.save();
             // Circle clip
             ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.clip();
-            // Beauty filter on PiP too
             if (S.beautyOn) ctx.filter = 'brightness(1.05) saturate(1.1)';
-            // Draw mirrored video filling the circle
             var vw = vid.videoWidth, vh = vid.videoHeight;
             var scale = Math.max(r * 2 / vw, r * 2 / vh);
             var dw = vw * scale, dh = vh * scale;
@@ -863,11 +862,20 @@
             ctx.drawImage(vid, 0, 0, dw, dh);
             ctx.filter = 'none';
             ctx.restore();
-            // Circle border
+            // Glow border
             ctx.strokeStyle = 'rgba(0,255,255,0.4)'; ctx.lineWidth = 3;
-            ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 12;
             ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
             ctx.shadowBlur = 0;
+            // Small drag hint
+            ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(0,255,255,0.3)'; ctx.textAlign = 'center';
+            ctx.fillText('drag to move', cx, cy + r + 14);
+        }
+
+        function hitTestPiP(x, y) {
+            if (S.camMode !== 'pip') return false;
+            var r = S.pipSize / 2;
+            return Math.hypot(x - S.pipX, y - S.pipY) < r + 10;
         }
 
         // Draw PDF panel onto the background canvas (so it's captured in recording)
@@ -1059,6 +1067,26 @@
                 ctx.restore();
             }
 
+            // Quick access buttons (top-left, always visible)
+            var qx = 14, qy = 36, qw = 80, qh = 22, qgap = 4;
+            // Camera toggle
+            ctx.fillStyle = S.camMode === 'pip' ? 'rgba(0,255,136,0.15)' : 'rgba(0,20,40,0.5)';
+            ctx.fillRect(qx, qy, qw, qh);
+            ctx.strokeStyle = S.camMode === 'pip' ? '#00ff88' : 'rgba(0,255,255,0.2)'; ctx.lineWidth = 1;
+            ctx.strokeRect(qx, qy, qw, qh);
+            ctx.font = '9px ' + F; ctx.fillStyle = S.camMode === 'pip' ? '#00ff88' : 'rgba(0,255,255,0.5)'; ctx.textAlign = 'center';
+            ctx.fillText('CAM: ' + S.camMode.toUpperCase(), qx + qw / 2, qy + 15);
+            S._qCamBtn = { x: qx, y: qy, w: qw, h: qh };
+            // Beauty toggle
+            qy += qh + qgap;
+            ctx.fillStyle = S.beautyOn ? 'rgba(255,170,0,0.15)' : 'rgba(0,20,40,0.5)';
+            ctx.fillRect(qx, qy, qw, qh);
+            ctx.strokeStyle = S.beautyOn ? '#ffaa00' : 'rgba(0,255,255,0.2)'; ctx.lineWidth = 1;
+            ctx.strokeRect(qx, qy, qw, qh);
+            ctx.fillStyle = S.beautyOn ? '#ffaa00' : 'rgba(0,255,255,0.5)';
+            ctx.fillText('BEAUTY: ' + (S.beautyOn ? 'ON' : 'OFF'), qx + qw / 2, qy + 15);
+            S._qBeautyBtn = { x: qx, y: qy, w: qw, h: qh };
+
             // FPS
             ctx.save(); ctx.font = '8px ' + F; ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.textAlign = 'left';
             ctx.fillText('FPS:' + S.fps, 8, h - 4);
@@ -1211,6 +1239,24 @@
             c.addEventListener('mousedown', function(e) {
                 var x = e.clientX, y = e.clientY;
 
+                // Quick-access HUD buttons
+                if (S._qCamBtn && x >= S._qCamBtn.x && x <= S._qCamBtn.x + S._qCamBtn.w && y >= S._qCamBtn.y && y <= S._qCamBtn.y + S._qCamBtn.h) {
+                    S.camMode = S.camMode === 'full' ? 'pip' : 'full';
+                    if (S.camMode === 'pip') { S.pipX = S.w - S.pipSize / 2 - 24; S.pipY = S.h - S.pipSize / 2 - 80; }
+                    return;
+                }
+                if (S._qBeautyBtn && x >= S._qBeautyBtn.x && x <= S._qBeautyBtn.x + S._qBeautyBtn.w && y >= S._qBeautyBtn.y && y <= S._qBeautyBtn.y + S._qBeautyBtn.h) {
+                    S.beautyOn = !S.beautyOn;
+                    return;
+                }
+
+                // Check if clicking camera PiP circle
+                if (hitTestPiP(x, y)) {
+                    S.pipDragging = true;
+                    S.pipDragOff = { x: x - S.pipX, y: y - S.pipY };
+                    return;
+                }
+
                 // Check if clicking a draggable panel
                 var cHit = hitTestPanel(x, y, contentPixelRect);
                 if (cHit) {
@@ -1237,6 +1283,13 @@
             c.addEventListener('mousemove', function(e) {
                 var x = e.clientX, y = e.clientY;
 
+                // PiP circle dragging
+                if (S.pipDragging) {
+                    S.pipX = x - S.pipDragOff.x;
+                    S.pipY = y - S.pipDragOff.y;
+                    return;
+                }
+
                 // Panel dragging/resizing
                 if (S.dragging) {
                     var box = S.dragging === 'content' ? S.contentBox : S.camPipBox;
@@ -1250,11 +1303,12 @@
                     return;
                 }
 
-                // Change cursor if hovering panel edge
+                // Change cursor based on what's under the mouse
                 var cHit = hitTestPanel(x, y, contentPixelRect);
                 var pHit = hitTestPanel(x, y, camPipPixelRect);
+                var pipHit = hitTestPiP(x, y);
                 if ((cHit === 'resize' || pHit === 'resize')) c.style.cursor = 'nwse-resize';
-                else if (cHit === 'drag' || pHit === 'drag') c.style.cursor = 'move';
+                else if (cHit === 'drag' || pHit === 'drag' || pipHit) c.style.cursor = 'move';
                 else c.style.cursor = S.wbTool === 'pointer' ? 'default' : 'crosshair';
 
                 if (S.wbTool === 'pointer') { S.pointerX = x; S.pointerY = y; return; }
@@ -1283,6 +1337,7 @@
                 }
             });
             c.addEventListener('mouseup', function(e) {
+                if (S.pipDragging) { S.pipDragging = false; return; }
                 if (S.dragging || S.resizing) { S.dragging = null; S.resizing = null; return; }
                 if (S.wbTool === 'pointer') { S.pointerActive = false; return; }
                 if (S.shapeType && S.shapeStart && S.shapePreview) {
