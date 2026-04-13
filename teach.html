@@ -373,8 +373,8 @@
         // ═══════════════════════════════════════════════════════════
 
         function generatePairCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
-        function drawQRCode(code) {
-            var url = window.location.origin + window.location.pathname + '?pair=' + code;
+        function drawQRCode(code, mode) {
+            var url = window.location.origin + window.location.pathname + '?pair=' + code + (mode ? '&mode=' + mode : '');
             var qr = qrcode(0, 'M'); qr.addData(url); qr.make();
             var cv = document.getElementById('qr-canvas'); if (!cv) return;
             var cx = cv.getContext('2d'), sz = cv.width, mc = qr.getModuleCount(), cs = sz / mc;
@@ -388,7 +388,7 @@
             document.getElementById('pair-code-display').textContent = code;
             document.getElementById('p-status').textContent = 'Waiting for content device...';
             document.getElementById('pair-overlay').style.display = 'block';
-            drawQRCode(code);
+            drawQRCode(code, 'content');
             if (S.peer) S.peer.destroy();
             S.peer = new Peer('jteach-' + code);
             S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active — connect from your device'; });
@@ -421,7 +421,7 @@
             document.getElementById('pair-code-display').textContent = code;
             document.getElementById('p-status').textContent = 'Waiting for camera device...';
             document.getElementById('pair-overlay').style.display = 'block';
-            drawQRCode(code);
+            drawQRCode(code, 'camera');
             if (S.peer) S.peer.destroy();
             S.peer = new Peer('jteach-' + code);
             S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active — send camera from your device'; });
@@ -481,13 +481,26 @@
             document.getElementById('mobile-ui').style.display = 'block';
             document.getElementById('setup').style.display = 'none';
 
-            var autoCode = new URLSearchParams(window.location.search).get('pair');
+            var params = new URLSearchParams(window.location.search);
+            var autoCode = params.get('pair');
+            var autoMode = params.get('mode'); // 'content', 'camera', or null
             if (autoCode && autoCode.length === 6) {
                 document.getElementById('m-choice').style.display = 'none';
                 document.getElementById('m-pair-form').style.display = 'block';
                 document.getElementById('pair-input').value = autoCode;
-                document.getElementById('m-status').textContent = 'Auto-connecting...';
-                S.mobileShareMode = 'camera';
+
+                // Auto-select the right share mode based on what desktop requested
+                if (autoMode === 'content') {
+                    S.mobileShareMode = 'screen';
+                    document.getElementById('m-status').textContent = 'Sharing screen to desktop...';
+                    document.getElementById('m-share-screen').classList.add('active');
+                    document.getElementById('m-share-cam').classList.remove('active');
+                } else {
+                    S.mobileShareMode = 'camera';
+                    document.getElementById('m-status').textContent = 'Sharing camera to desktop...';
+                    document.getElementById('m-share-cam').classList.add('active');
+                }
+
                 setTimeout(function() { connectMobile(autoCode); }, 800);
                 return;
             }
@@ -519,8 +532,18 @@
             var st = document.getElementById('m-status'), pv = document.getElementById('mobile-preview');
             st.textContent = 'Getting media...';
             var constraints;
-            if (S.mobileShareMode === 'screen' && navigator.mediaDevices.getDisplayMedia) {
-                navigator.mediaDevices.getDisplayMedia({ video: true }).then(gotStream).catch(function(e) { st.textContent = 'Screen share failed'; });
+            if (S.mobileShareMode === 'screen') {
+                if (navigator.mediaDevices.getDisplayMedia) {
+                    navigator.mediaDevices.getDisplayMedia({ video: true }).then(gotStream).catch(function(e) {
+                        st.textContent = 'Screen share failed — trying camera...';
+                        // Fallback to camera if screen share denied/unsupported
+                        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: {ideal:1280}, height: {ideal:720} }, audio: false }).then(gotStream).catch(function(e2) { st.textContent = 'Failed: ' + e2.message; });
+                    });
+                } else {
+                    // getDisplayMedia not available (older Safari) — use camera pointing at content
+                    st.textContent = 'Screen share not supported — using camera...';
+                    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: {ideal:1280}, height: {ideal:720} }, audio: false }).then(gotStream).catch(function(e) { st.textContent = 'Camera failed: ' + e.message; });
+                }
             } else {
                 navigator.mediaDevices.getUserMedia({ video: { facingMode: S.mobileFacing, width: {ideal:1280}, height: {ideal:720} }, audio: false }).then(gotStream).catch(function(e) { st.textContent = 'Camera failed: ' + e.message; });
             }
