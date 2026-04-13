@@ -284,6 +284,8 @@
             templateLoaded: null,
             // Quiz mode
             quizActive: false, quizQuestion: '', quizTimer: 0, quizTimerStart: 0, quizRevealed: false,
+            // Remote drawing state
+            _remoteLastX: 0, _remoteLastY: 0,
             // Draggable components (normalized 0-1 positions + size)
             contentBox: { x: 0.62, y: 0.55, w: 0.35, h: 0 }, // auto height from aspect
             camPipBox: { x: 0.78, y: 0.02, w: 0.2, h: 0.2 },
@@ -408,6 +410,72 @@
                     document.getElementById('btn-pair-device').classList.add('active');
                 });
                 call.on('close', function() { S.hasContent = false; S.contentVideo = null; });
+            });
+            // Data channel: iPad whiteboard sends draw commands here
+            S.peer.on('connection', function(conn) {
+                document.getElementById('pair-overlay').style.display = 'none';
+                document.getElementById('content-status').textContent = 'iPad writing board connected';
+                document.getElementById('content-status').className = 'status on';
+                var remoteColor = '#ffffff', remoteSize = 5, remoteErasing = false;
+                conn.on('data', function(raw) {
+                    var msg;
+                    try { msg = JSON.parse(raw); } catch(e) { return; }
+                    if (!S.wbCtx) return;
+                    var ctx = S.wbCtx;
+                    var w = S.w, h = S.h;
+
+                    switch (msg.type) {
+                        case 'down':
+                            remoteColor = msg.color;
+                            remoteSize = msg.size || 5;
+                            remoteErasing = (msg.color === '__erase__');
+                            S._remoteLastX = msg.x * w;
+                            S._remoteLastY = msg.y * h;
+                            break;
+                        case 'move':
+                            var cx = msg.x * w, cy = msg.y * h;
+                            ctx.beginPath();
+                            ctx.moveTo(S._remoteLastX, S._remoteLastY);
+                            ctx.lineTo(cx, cy);
+                            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                            if (remoteErasing) {
+                                ctx.globalCompositeOperation = 'destination-out';
+                                ctx.strokeStyle = 'rgba(0,0,0,1)';
+                                ctx.lineWidth = remoteSize * 4;
+                            } else {
+                                ctx.globalCompositeOperation = 'source-over';
+                                ctx.strokeStyle = remoteColor;
+                                ctx.lineWidth = remoteSize;
+                                ctx.shadowColor = remoteColor;
+                                ctx.shadowBlur = 2;
+                            }
+                            ctx.stroke();
+                            ctx.shadowBlur = 0;
+                            ctx.globalCompositeOperation = 'source-over';
+                            S._remoteLastX = cx;
+                            S._remoteLastY = cy;
+                            break;
+                        case 'up':
+                            break;
+                        case 'clear':
+                            ctx.clearRect(0, 0, w, h);
+                            break;
+                        case 'pdf':
+                            // Received PDF from iPad - load it on desktop
+                            try {
+                                var binary = atob(msg.data);
+                                var arr = new Uint8Array(binary.length);
+                                for (var i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+                                document.getElementById('pdf-name').textContent = msg.name || 'iPad PDF';
+                                loadPDFData(arr);
+                            } catch(e) { console.warn('PDF load from iPad failed:', e); }
+                            break;
+                    }
+                });
+                conn.on('close', function() {
+                    document.getElementById('content-status').textContent = 'iPad disconnected';
+                    document.getElementById('content-status').className = 'status';
+                });
             });
         }
 
@@ -547,129 +615,131 @@
             document.getElementById('m-share-cam').classList.add('active');
         }
 
-        // ── Mobile Whiteboard: iPad becomes a wireless writing tablet ──
+        // ── Mobile Whiteboard: iPad draws on desktop's whiteboard via data channel ──
         function startMobileWhiteboard(code) {
-            // Hide all UI
             document.getElementById('mobile-ui').style.display = 'none';
 
-            // Create fullscreen whiteboard
+            // Build fullscreen drawing UI on iPad
             var wrap = document.createElement('div');
-            wrap.style.cssText = 'position:fixed;inset:0;z-index:300;background:#111;touch-action:none;';
+            wrap.id = 'ipad-wb-wrap';
+            wrap.style.cssText = 'position:fixed;inset:0;z-index:300;background:#111;touch-action:none;overflow:hidden;';
 
             // Toolbar
             var tb = document.createElement('div');
-            tb.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:301;display:flex;gap:6px;padding:8px;background:rgba(0,10,20,0.9);align-items:center;justify-content:center;flex-wrap:wrap;';
+            tb.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:310;display:flex;gap:5px;padding:6px 10px;background:rgba(0,10,20,0.95);align-items:center;justify-content:center;flex-wrap:wrap;';
 
-            // Colors
-            var colors = ['#ffffff','#00ffff','#ffaa00','#ff3355','#00ff88','#ff00ff','#ffdd00'];
-            var curColor = '#ffffff';
-            var curSize = 4;
-            colors.forEach(function(c) {
-                var btn = document.createElement('div');
-                btn.style.cssText = 'width:28px;height:28px;border-radius:50%;border:2px solid ' + (c === curColor ? '#fff' : 'transparent') + ';background:' + c + ';cursor:pointer;';
-                btn.onclick = function() {
-                    curColor = c;
-                    tb.querySelectorAll('div').forEach(function(d) { if (d.style.borderRadius === '50%') d.style.borderColor = 'transparent'; });
-                    btn.style.borderColor = '#fff';
-                };
-                tb.appendChild(btn);
+            var curColor = '#ffffff', curSize = 5, erasing = false;
+
+            ['#ffffff','#00ffff','#ffaa00','#ff3355','#00ff88','#ff00ff','#ffdd00'].forEach(function(c) {
+                var d = document.createElement('div');
+                d.style.cssText = 'width:26px;height:26px;border-radius:50%;border:2px solid ' + (c === curColor ? '#fff' : 'transparent') + ';background:' + c + ';';
+                d.ontouchstart = d.onclick = function(e) { e.preventDefault(); curColor = c; erasing = false; tb.querySelectorAll('[data-sw]').forEach(function(s){s.style.borderColor='transparent';}); d.style.borderColor='#fff'; };
+                d.dataset.sw = '1';
+                tb.appendChild(d);
             });
-
-            // Size buttons
-            [2, 4, 8, 14].forEach(function(sz) {
-                var btn = document.createElement('button');
-                btn.textContent = sz === 2 ? 'S' : sz === 4 ? 'M' : sz === 8 ? 'L' : 'XL';
-                btn.style.cssText = 'background:' + (sz === curSize ? 'rgba(0,255,255,0.2)' : 'rgba(0,20,40,0.6)') + ';border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:4px 10px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;';
-                btn.onclick = function() { curSize = sz; };
-                tb.appendChild(btn);
+            // Sizes
+            [3, 6, 12, 20].forEach(function(sz) {
+                var b = document.createElement('button');
+                b.textContent = ['S','M','L','XL'][[3,6,12,20].indexOf(sz)];
+                b.style.cssText = 'background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:3px 8px;font-size:10px;border-radius:4px;font-family:inherit;';
+                b.ontouchstart = b.onclick = function(e) { e.preventDefault(); curSize = sz; };
+                tb.appendChild(b);
             });
+            var eBtn = document.createElement('button');
+            eBtn.textContent = 'Eraser'; eBtn.style.cssText = 'background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:3px 8px;font-size:10px;border-radius:4px;font-family:inherit;';
+            eBtn.ontouchstart = eBtn.onclick = function(e) { e.preventDefault(); erasing = !erasing; eBtn.style.background = erasing ? 'rgba(255,60,60,0.3)' : 'rgba(0,20,40,0.6)'; };
+            tb.appendChild(eBtn);
+            var clrBtn = document.createElement('button');
+            clrBtn.textContent = 'Clear'; clrBtn.style.cssText = 'background:rgba(40,0,0,0.5);border:1px solid rgba(255,60,60,0.3);color:#ff5555;padding:3px 8px;font-size:10px;border-radius:4px;font-family:inherit;';
+            clrBtn.ontouchstart = clrBtn.onclick = function(e) { e.preventDefault(); if (dataConn) dataConn.send(JSON.stringify({type:'clear'})); localCtx.fillStyle='#111'; localCtx.fillRect(0,0,localCanvas.width,localCanvas.height); };
+            tb.appendChild(clrBtn);
+            // PDF load
+            var pdfBtn = document.createElement('button');
+            pdfBtn.textContent = 'PDF'; pdfBtn.style.cssText = 'background:rgba(0,30,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:3px 8px;font-size:10px;border-radius:4px;font-family:inherit;';
+            var pdfInput = document.createElement('input'); pdfInput.type = 'file'; pdfInput.accept = '.pdf'; pdfInput.style.display = 'none';
+            pdfBtn.ontouchstart = pdfBtn.onclick = function(e) { e.preventDefault(); pdfInput.click(); };
+            tb.appendChild(pdfBtn); tb.appendChild(pdfInput);
 
-            // Eraser
-            var eraserBtn = document.createElement('button');
-            eraserBtn.textContent = 'Eraser';
-            eraserBtn.style.cssText = 'background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:4px 10px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;';
-            var erasing = false;
-            eraserBtn.onclick = function() { erasing = !erasing; eraserBtn.style.background = erasing ? 'rgba(255,60,60,0.3)' : 'rgba(0,20,40,0.6)'; };
-            tb.appendChild(eraserBtn);
-
-            // Clear
-            var clearBtn = document.createElement('button');
-            clearBtn.textContent = 'Clear';
-            clearBtn.style.cssText = 'background:rgba(40,0,0,0.6);border:1px solid rgba(255,60,60,0.3);color:#ff5555;padding:4px 10px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;';
-            clearBtn.onclick = function() { wbCtx.fillStyle = '#111'; wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height); };
-            tb.appendChild(clearBtn);
-
-            // Status
             var statusEl = document.createElement('span');
-            statusEl.style.cssText = 'font-size:10px;color:#00ff88;margin-left:8px;';
+            statusEl.style.cssText = 'font-size:9px;color:rgba(0,255,255,0.5);margin-left:6px;';
             statusEl.textContent = 'Connecting...';
             tb.appendChild(statusEl);
 
             wrap.appendChild(tb);
 
-            // Canvas
-            var wbCanvas = document.createElement('canvas');
-            wbCanvas.style.cssText = 'width:100%;height:100%;display:block;touch-action:none;';
-            wbCanvas.width = window.innerWidth * 2; // 2x for retina
-            wbCanvas.height = window.innerHeight * 2;
-            var wbCtx = wbCanvas.getContext('2d');
-            wbCtx.fillStyle = '#111';
-            wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height);
-            wbCtx.lineCap = 'round';
-            wbCtx.lineJoin = 'round';
-            wrap.appendChild(wbCanvas);
+            // Local drawing canvas (what user sees on iPad)
+            var localCanvas = document.createElement('canvas');
+            localCanvas.style.cssText = 'width:100%;height:100%;display:block;touch-action:none;';
+            localCanvas.width = 1920; localCanvas.height = 1080;
+            var localCtx = localCanvas.getContext('2d');
+            localCtx.fillStyle = '#111'; localCtx.fillRect(0, 0, 1920, 1080);
+            localCtx.lineCap = 'round'; localCtx.lineJoin = 'round';
+            wrap.appendChild(localCanvas);
             document.body.appendChild(wrap);
 
-            // Drawing with touch + pointer events (Apple Pencil)
-            var drawing = false, lastX = 0, lastY = 0;
-            var scaleX = wbCanvas.width / window.innerWidth;
-            var scaleY = wbCanvas.height / window.innerHeight;
+            // Touch/Pen drawing
+            var drawing = false, lastNX = 0, lastNY = 0;
+            var tbHeight = 42; // toolbar height in px
 
-            function getPos(e) {
-                var t = e.touches ? e.touches[0] : e;
-                return { x: t.clientX * scaleX, y: t.clientY * scaleY };
+            function getNormPos(e) {
+                var x = e.clientX / window.innerWidth;
+                var y = (e.clientY - tbHeight) / (window.innerHeight - tbHeight);
+                return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
             }
 
-            wbCanvas.addEventListener('pointerdown', function(e) {
+            localCanvas.addEventListener('pointerdown', function(e) {
+                if (e.clientY < tbHeight) return; // ignore toolbar area
                 e.preventDefault();
                 drawing = true;
-                var p = getPos(e);
-                lastX = p.x; lastY = p.y;
+                var p = getNormPos(e);
+                lastNX = p.x; lastNY = p.y;
+                if (dataConn) dataConn.send(JSON.stringify({ type: 'down', x: p.x, y: p.y, color: erasing ? '__erase__' : curColor, size: curSize }));
             });
-            wbCanvas.addEventListener('pointermove', function(e) {
-                e.preventDefault();
+            localCanvas.addEventListener('pointermove', function(e) {
                 if (!drawing) return;
-                var p = getPos(e);
-                wbCtx.beginPath();
-                wbCtx.moveTo(lastX, lastY);
-                wbCtx.lineTo(p.x, p.y);
-                if (erasing) {
-                    wbCtx.globalCompositeOperation = 'destination-out';
-                    wbCtx.strokeStyle = 'rgba(0,0,0,1)';
-                    wbCtx.lineWidth = curSize * scaleX * 4;
-                } else {
-                    wbCtx.globalCompositeOperation = 'source-over';
-                    wbCtx.strokeStyle = curColor;
-                    wbCtx.lineWidth = curSize * scaleX;
-                    wbCtx.shadowColor = curColor;
-                    wbCtx.shadowBlur = 2;
-                }
-                wbCtx.stroke();
-                wbCtx.shadowBlur = 0;
-                wbCtx.globalCompositeOperation = 'source-over';
-                lastX = p.x; lastY = p.y;
+                e.preventDefault();
+                var p = getNormPos(e);
+                // Draw locally
+                var cx = p.x * 1920, cy = p.y * 1080, lx = lastNX * 1920, ly = lastNY * 1080;
+                localCtx.beginPath(); localCtx.moveTo(lx, ly); localCtx.lineTo(cx, cy);
+                if (erasing) { localCtx.globalCompositeOperation = 'destination-out'; localCtx.strokeStyle = 'rgba(0,0,0,1)'; localCtx.lineWidth = curSize * 4; }
+                else { localCtx.globalCompositeOperation = 'source-over'; localCtx.strokeStyle = curColor; localCtx.lineWidth = curSize; }
+                localCtx.stroke(); localCtx.globalCompositeOperation = 'source-over';
+                // Send to desktop
+                if (dataConn) dataConn.send(JSON.stringify({ type: 'move', x: p.x, y: p.y }));
+                lastNX = p.x; lastNY = p.y;
             });
-            wbCanvas.addEventListener('pointerup', function() { drawing = false; });
-            wbCanvas.addEventListener('pointerleave', function() { drawing = false; });
+            localCanvas.addEventListener('pointerup', function(e) {
+                drawing = false;
+                if (dataConn) dataConn.send(JSON.stringify({ type: 'up' }));
+            });
+            localCanvas.addEventListener('pointercancel', function() { drawing = false; });
 
-            // Stream the canvas to desktop via WebRTC
-            var stream = wbCanvas.captureStream(15); // 15fps is enough for writing
+            // PDF loading on iPad → send to desktop
+            pdfInput.addEventListener('change', function(ev) {
+                var file = ev.target.files[0]; if (!file) return;
+                var reader = new FileReader();
+                reader.onload = function(re) {
+                    var data = new Uint8Array(re.target.result);
+                    // Send PDF as base64 to desktop
+                    var b64 = btoa(String.fromCharCode.apply(null, data.length < 100000 ? data : Array.from(data)));
+                    if (dataConn) dataConn.send(JSON.stringify({ type: 'pdf', name: file.name, data: b64 }));
+                    statusEl.textContent = 'PDF sent: ' + file.name;
+                };
+                reader.readAsArrayBuffer(file);
+                ev.target.value = '';
+            });
+
+            // Connect via PeerJS data channel
+            var dataConn = null;
             var peer = new Peer();
             peer.on('open', function() {
-                var call = peer.call('jteach-' + code, stream);
-                if (!call) { statusEl.textContent = 'Failed to connect'; return; }
-                statusEl.textContent = 'LIVE — Drawing streams to desktop';
-                statusEl.style.color = '#00ff88';
+                dataConn = peer.connect('jteach-' + code, { reliable: true });
+                dataConn.on('open', function() {
+                    statusEl.textContent = 'CONNECTED — draw here, appears on desktop';
+                    statusEl.style.color = '#00ff88';
+                });
+                dataConn.on('error', function(e) { statusEl.textContent = 'Data error: ' + e; });
             });
             peer.on('error', function(err) { statusEl.textContent = 'Error: ' + err.type; });
         }
