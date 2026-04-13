@@ -323,9 +323,9 @@
             S.peer.on('call', function(call) {
                 call.answer();
                 call.on('stream', function(rs) {
-                    S.remoteVideo = document.createElement('video');
+                    S.remoteVideo = document.createElement('video'); S.remoteVideo.style.display='none'; document.body.appendChild(S.remoteVideo);
                     S.remoteVideo.srcObject = rs; S.remoteVideo.autoplay = true; S.remoteVideo.playsInline = true; S.remoteVideo.muted = true;
-                    S.remoteVideo.play();
+                    S.remoteVideo.play().catch(function(e){ console.warn('Remote video play failed:', e); });
                     S.usingRemote = true;
                     document.getElementById('pair-overlay').style.display = 'none';
                     launchStudio();

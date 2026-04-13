@@ -1041,10 +1041,10 @@
         }
 
         function onRemoteCameraConnected(stream) {
-            G.remoteVideo = document.createElement('video');
+            G.remoteVideo = document.createElement('video'); G.remoteVideo.style.display='none'; document.body.appendChild(G.remoteVideo);
             G.remoteVideo.srcObject = stream;
             G.remoteVideo.autoplay = true; G.remoteVideo.playsInline = true; G.remoteVideo.muted = true;
-            G.remoteVideo.play();
+            G.remoteVideo.play().catch(function(e){ console.warn('Remote video play failed:', e); });
             if (G.localCamera && G.localCamera.stop) G.localCamera.stop();
             G.usingRemoteCamera = true; G.remoteConnected = true;
             G.remoteVideo.onloadeddata = function() { processRemoteFrames(); };

@@ -782,7 +782,7 @@
         }
         function cancelPairing() { document.getElementById('pair-overlay').style.display = 'none'; if (S.peer) { S.peer.destroy(); S.peer = null; } }
         function onRemoteCam(stream) {
-            S.remoteVideo = document.createElement('video'); S.remoteVideo.srcObject = stream; S.remoteVideo.autoplay = true; S.remoteVideo.playsInline = true; S.remoteVideo.muted = true; S.remoteVideo.play();
+            S.remoteVideo = document.createElement('video'); S.remoteVideo.style.display='none'; document.body.appendChild(S.remoteVideo); S.remoteVideo.srcObject = stream; S.remoteVideo.autoplay = true; S.remoteVideo.playsInline = true; S.remoteVideo.muted = true; S.remoteVideo.play().catch(function(e){ console.warn('Remote video play failed:', e); });
             if (S.localCamera && S.localCamera.stop) S.localCamera.stop();
             S.usingRemoteCamera = true;
             S.remoteVideo.onloadeddata = function() { processRemote(); };
