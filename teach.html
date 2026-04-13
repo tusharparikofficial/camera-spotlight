@@ -497,10 +497,14 @@
                     // Screen share requires a USER TAP (browser security).
                     // Show a big button instead of auto-connecting.
                     document.getElementById('m-status').innerHTML =
-                        '<div style="margin:12px 0;font-size:13px;color:#ffaa00;">Desktop wants your screen content</div>' +
-                        '<button id="m-tap-share" style="background:rgba(0,40,20,0.6);border:2px solid #00ff88;color:#00ff88;padding:18px 36px;font-family:inherit;font-size:16px;cursor:pointer;border-radius:8px;letter-spacing:2px;margin:8px;">TAP TO SHARE SCREEN</button>' +
-                        '<div style="margin:8px 0;font-size:10px;opacity:0.4;">Or use camera to point at your content</div>' +
-                        '<button id="m-tap-cam" style="background:transparent;border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:10px 20px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;letter-spacing:1px;">USE CAMERA INSTEAD</button>';
+                        '<div style="margin:12px 0;font-size:13px;color:#ffaa00;">How do you want to share content?</div>' +
+                        '<button id="m-tap-board" style="display:block;width:100%;background:rgba(0,40,20,0.6);border:2px solid #00ff88;color:#00ff88;padding:18px;font-family:inherit;font-size:15px;cursor:pointer;border-radius:8px;letter-spacing:2px;margin:8px 0;">&#x270F; USE AS WRITING BOARD</button>' +
+                        '<div style="font-size:9px;opacity:0.3;margin-bottom:12px;">Draw with Apple Pencil / finger — streams to desktop live</div>' +
+                        '<button id="m-tap-share" style="display:block;width:100%;background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:12px;font-family:inherit;font-size:12px;cursor:pointer;border-radius:6px;margin:6px 0;">&#x1F5A5; SHARE SCREEN</button>' +
+                        '<button id="m-tap-cam" style="display:block;width:100%;background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:12px;font-family:inherit;font-size:12px;cursor:pointer;border-radius:6px;margin:6px 0;">&#x1F4F8; USE CAMERA</button>';
+                    document.getElementById('m-tap-board').onclick = function() {
+                        startMobileWhiteboard(autoCode);
+                    };
                     document.getElementById('m-tap-share').onclick = function() {
                         S.mobileShareMode = 'screen';
                         connectMobile(autoCode);
@@ -541,6 +545,133 @@
             };
             document.getElementById('pair-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') document.getElementById('pair-connect').click(); });
             document.getElementById('m-share-cam').classList.add('active');
+        }
+
+        // ── Mobile Whiteboard: iPad becomes a wireless writing tablet ──
+        function startMobileWhiteboard(code) {
+            // Hide all UI
+            document.getElementById('mobile-ui').style.display = 'none';
+
+            // Create fullscreen whiteboard
+            var wrap = document.createElement('div');
+            wrap.style.cssText = 'position:fixed;inset:0;z-index:300;background:#111;touch-action:none;';
+
+            // Toolbar
+            var tb = document.createElement('div');
+            tb.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:301;display:flex;gap:6px;padding:8px;background:rgba(0,10,20,0.9);align-items:center;justify-content:center;flex-wrap:wrap;';
+
+            // Colors
+            var colors = ['#ffffff','#00ffff','#ffaa00','#ff3355','#00ff88','#ff00ff','#ffdd00'];
+            var curColor = '#ffffff';
+            var curSize = 4;
+            colors.forEach(function(c) {
+                var btn = document.createElement('div');
+                btn.style.cssText = 'width:28px;height:28px;border-radius:50%;border:2px solid ' + (c === curColor ? '#fff' : 'transparent') + ';background:' + c + ';cursor:pointer;';
+                btn.onclick = function() {
+                    curColor = c;
+                    tb.querySelectorAll('div').forEach(function(d) { if (d.style.borderRadius === '50%') d.style.borderColor = 'transparent'; });
+                    btn.style.borderColor = '#fff';
+                };
+                tb.appendChild(btn);
+            });
+
+            // Size buttons
+            [2, 4, 8, 14].forEach(function(sz) {
+                var btn = document.createElement('button');
+                btn.textContent = sz === 2 ? 'S' : sz === 4 ? 'M' : sz === 8 ? 'L' : 'XL';
+                btn.style.cssText = 'background:' + (sz === curSize ? 'rgba(0,255,255,0.2)' : 'rgba(0,20,40,0.6)') + ';border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:4px 10px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;';
+                btn.onclick = function() { curSize = sz; };
+                tb.appendChild(btn);
+            });
+
+            // Eraser
+            var eraserBtn = document.createElement('button');
+            eraserBtn.textContent = 'Eraser';
+            eraserBtn.style.cssText = 'background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:4px 10px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;';
+            var erasing = false;
+            eraserBtn.onclick = function() { erasing = !erasing; eraserBtn.style.background = erasing ? 'rgba(255,60,60,0.3)' : 'rgba(0,20,40,0.6)'; };
+            tb.appendChild(eraserBtn);
+
+            // Clear
+            var clearBtn = document.createElement('button');
+            clearBtn.textContent = 'Clear';
+            clearBtn.style.cssText = 'background:rgba(40,0,0,0.6);border:1px solid rgba(255,60,60,0.3);color:#ff5555;padding:4px 10px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;';
+            clearBtn.onclick = function() { wbCtx.fillStyle = '#111'; wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height); };
+            tb.appendChild(clearBtn);
+
+            // Status
+            var statusEl = document.createElement('span');
+            statusEl.style.cssText = 'font-size:10px;color:#00ff88;margin-left:8px;';
+            statusEl.textContent = 'Connecting...';
+            tb.appendChild(statusEl);
+
+            wrap.appendChild(tb);
+
+            // Canvas
+            var wbCanvas = document.createElement('canvas');
+            wbCanvas.style.cssText = 'width:100%;height:100%;display:block;touch-action:none;';
+            wbCanvas.width = window.innerWidth * 2; // 2x for retina
+            wbCanvas.height = window.innerHeight * 2;
+            var wbCtx = wbCanvas.getContext('2d');
+            wbCtx.fillStyle = '#111';
+            wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height);
+            wbCtx.lineCap = 'round';
+            wbCtx.lineJoin = 'round';
+            wrap.appendChild(wbCanvas);
+            document.body.appendChild(wrap);
+
+            // Drawing with touch + pointer events (Apple Pencil)
+            var drawing = false, lastX = 0, lastY = 0;
+            var scaleX = wbCanvas.width / window.innerWidth;
+            var scaleY = wbCanvas.height / window.innerHeight;
+
+            function getPos(e) {
+                var t = e.touches ? e.touches[0] : e;
+                return { x: t.clientX * scaleX, y: t.clientY * scaleY };
+            }
+
+            wbCanvas.addEventListener('pointerdown', function(e) {
+                e.preventDefault();
+                drawing = true;
+                var p = getPos(e);
+                lastX = p.x; lastY = p.y;
+            });
+            wbCanvas.addEventListener('pointermove', function(e) {
+                e.preventDefault();
+                if (!drawing) return;
+                var p = getPos(e);
+                wbCtx.beginPath();
+                wbCtx.moveTo(lastX, lastY);
+                wbCtx.lineTo(p.x, p.y);
+                if (erasing) {
+                    wbCtx.globalCompositeOperation = 'destination-out';
+                    wbCtx.strokeStyle = 'rgba(0,0,0,1)';
+                    wbCtx.lineWidth = curSize * scaleX * 4;
+                } else {
+                    wbCtx.globalCompositeOperation = 'source-over';
+                    wbCtx.strokeStyle = curColor;
+                    wbCtx.lineWidth = curSize * scaleX;
+                    wbCtx.shadowColor = curColor;
+                    wbCtx.shadowBlur = 2;
+                }
+                wbCtx.stroke();
+                wbCtx.shadowBlur = 0;
+                wbCtx.globalCompositeOperation = 'source-over';
+                lastX = p.x; lastY = p.y;
+            });
+            wbCanvas.addEventListener('pointerup', function() { drawing = false; });
+            wbCanvas.addEventListener('pointerleave', function() { drawing = false; });
+
+            // Stream the canvas to desktop via WebRTC
+            var stream = wbCanvas.captureStream(15); // 15fps is enough for writing
+            var peer = new Peer();
+            peer.on('open', function() {
+                var call = peer.call('jteach-' + code, stream);
+                if (!call) { statusEl.textContent = 'Failed to connect'; return; }
+                statusEl.textContent = 'LIVE — Drawing streams to desktop';
+                statusEl.style.color = '#00ff88';
+            });
+            peer.on('error', function(err) { statusEl.textContent = 'Error: ' + err.type; });
         }
 
         function connectMobile(code) {
