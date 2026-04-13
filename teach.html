@@ -341,6 +341,10 @@
                 S.localStream = stream;
                 S.localVideo = document.getElementById('localVideo');
                 S.localVideo.srcObject = stream;
+                S.localVideo.muted = true;
+                S.localVideo.playsInline = true;
+                return S.localVideo.play();
+            }).then(function() {
                 S.hasLocalCam = true;
                 document.getElementById('cam-status').textContent = 'Webcam active';
                 document.getElementById('cam-status').className = 'status on';
