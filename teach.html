@@ -79,6 +79,7 @@
                 <div class="row">
                     <button class="btn" id="btn-bg-remove"><span class="icon">&#x2728;</span>BG Removal (Local)</button>
                     <button class="btn" id="btn-bg-remove-paired"><span class="icon">&#x2728;&#x1F4F1;</span>BG Removal (Paired)</button>
+                    <button class="btn" id="btn-beauty"><span class="icon">&#x1F48E;</span>Beauty Filter</button>
                 </div>
                 <div class="status" id="cam-status">No camera selected</div>
             </div>
@@ -284,6 +285,11 @@
             templateLoaded: null,
             // Quiz mode
             quizActive: false, quizQuestion: '', quizTimer: 0, quizTimerStart: 0, quizRevealed: false,
+            // Camera display mode (switchable during recording)
+            camMode: 'full', // 'full' = background, 'pip' = circle bottom-right
+            pipSize: 160, pipMargin: 20,
+            // Beauty filter
+            beautyOn: false, beautySoftness: 8,
             // Remote drawing state
             _remoteLastX: 0, _remoteLastY: 0,
             // Draggable components (normalized 0-1 positions + size)
@@ -799,25 +805,87 @@
 
         function drawBG(ctx, w, h, time) {
             var vid = (S.hasLocalCam && !S.bgRemoval) ? S.localVideo : null;
+            var showFullCam = vid && vid.readyState >= 2 && S.camMode === 'full';
 
-            // Camera feed as background (skip if bg removal active - drawn separately)
-            if (vid && vid.readyState >= 2) {
+            // Camera feed as fullscreen background
+            if (showFullCam) {
                 var vw = vid.videoWidth, vh = vid.videoHeight;
                 var scale = Math.max(w / vw, h / vh);
                 var dw = vw * scale, dh = vh * scale;
                 ctx.save();
-                ctx.translate(w, 0); ctx.scale(-1, 1); // mirror
+                // Beauty filter: slight blur + brightness boost
+                if (S.beautyOn) ctx.filter = 'blur(' + Math.round(S.beautySoftness / 4) + 'px) brightness(1.05) contrast(0.95) saturate(1.1)';
+                ctx.translate(w, 0); ctx.scale(-1, 1);
                 ctx.drawImage(vid, (w - dw) / 2, (h - dh) / 2, dw, dh);
+                ctx.filter = 'none';
                 ctx.restore();
+                // Beauty: draw sharp layer on top at reduced opacity for skin smoothing effect
+                if (S.beautyOn) {
+                    ctx.save(); ctx.globalAlpha = 0.55;
+                    ctx.translate(w, 0); ctx.scale(-1, 1);
+                    ctx.drawImage(vid, (w - dw) / 2, (h - dh) / 2, dw, dh);
+                    ctx.restore();
+                    // Soft warm glow
+                    ctx.fillStyle = 'rgba(255,220,180,0.03)'; ctx.fillRect(0, 0, w, h);
+                }
             }
 
+            // Virtual background style (when no cam or PiP mode)
+            var needsBG = !showFullCam;
             switch (S.bgStyle) {
-                case 'hud': drawBG_HUD(ctx, w, h, time, !!vid); break;
-                case 'dark': drawBG_Dark(ctx, w, h, time, !!vid); break;
-                case 'space': drawBG_Space(ctx, w, h, time, !!vid); break;
-                case 'matrix': drawBG_Matrix(ctx, w, h, time, !!vid); break;
-                case 'clean': if (!vid) { ctx.fillStyle = '#0a0a18'; ctx.fillRect(0,0,w,h); } break;
+                case 'hud': drawBG_HUD(ctx, w, h, time, !needsBG); break;
+                case 'dark': drawBG_Dark(ctx, w, h, time, !needsBG); break;
+                case 'space': drawBG_Space(ctx, w, h, time, !needsBG); break;
+                case 'matrix': drawBG_Matrix(ctx, w, h, time, !needsBG); break;
+                case 'clean': if (needsBG) { ctx.fillStyle = '#0a0a18'; ctx.fillRect(0,0,w,h); } break;
             }
+        }
+
+        // Draw camera as circular PiP in corner
+        function drawCamPiP(ctx, w, h) {
+            if (S.camMode !== 'pip' || !S.hasLocalCam) return;
+            var vid = S.localVideo;
+            if (!vid || vid.readyState < 2) return;
+            var r = S.pipSize / 2;
+            var cx = w - r - S.pipMargin;
+            var cy = h - r - S.pipMargin - 60; // above toolbar
+
+            ctx.save();
+            // Circle clip
+            ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.clip();
+            // Beauty filter on PiP too
+            if (S.beautyOn) ctx.filter = 'brightness(1.05) saturate(1.1)';
+            // Draw mirrored video filling the circle
+            var vw = vid.videoWidth, vh = vid.videoHeight;
+            var scale = Math.max(r * 2 / vw, r * 2 / vh);
+            var dw = vw * scale, dh = vh * scale;
+            ctx.translate(cx + dw / 2, cy - dh / 2); ctx.scale(-1, 1);
+            ctx.drawImage(vid, 0, 0, dw, dh);
+            ctx.filter = 'none';
+            ctx.restore();
+            // Circle border
+            ctx.strokeStyle = 'rgba(0,255,255,0.4)'; ctx.lineWidth = 3;
+            ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 10;
+            ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+
+        // Draw PDF panel onto the background canvas (so it's captured in recording)
+        function drawPDFOnCanvas(ctx) {
+            var panel = document.getElementById('pdf-panel');
+            if (!panel || panel.style.display === 'none') return;
+            var pdfCanvas = document.getElementById('pdf-canvas');
+            if (!pdfCanvas || pdfCanvas.width === 0) return;
+            // Get the panel's position and size
+            var rect = panel.getBoundingClientRect();
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.85)';
+            ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
+            ctx.drawImage(pdfCanvas, rect.left, rect.top + 30, rect.width, rect.height - 30);
+            // Border
+            ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 1;
+            ctx.strokeRect(rect.left, rect.top, rect.width, rect.height);
+            ctx.restore();
         }
 
         function drawBG_HUD(ctx, w, h, time, hasCam) {
@@ -1786,6 +1854,20 @@
 
             addSep();
 
+            // Camera mode toggle (C key)
+            addBtn(S.camMode === 'full' ? '\uD83C\uDFA5' : '\u25CF', 'Camera: ' + S.camMode.toUpperCase() + ' (C)', S.camMode === 'pip' ? 'active' : '', function() {
+                S.camMode = S.camMode === 'full' ? 'pip' : 'full';
+                buildToolbar();
+            });
+
+            // Beauty filter (B key)
+            addBtn('\u2728', 'Beauty filter (B)', S.beautyOn ? 'active' : '', function() {
+                S.beautyOn = !S.beautyOn;
+                this.classList.toggle('active', S.beautyOn);
+            });
+
+            addSep();
+
             // Stamps
             addBtn('\u2713', 'Stamps', '', function() {
                 var panel = document.getElementById('stamp-panel');
@@ -1867,10 +1949,11 @@
             if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
 
             drawBG(ctx, w, h, ts);
-            // BG removal: draw person on top of background
             if (S.bgRemoval && S.segMask) drawBGRemoved(ctx, w, h);
             drawGrid(ctx);
+            drawPDFOnCanvas(ctx); // PDF drawn on bg canvas = captured in recording
             drawContent(ctx, w, h);
+            drawCamPiP(ctx, w, h); // Circle camera PiP when in pip mode
             drawQuiz(ctx, w, h, ts);
             drawLowerThird(ctx);
             drawHUD(ctx, w, h, ts);
@@ -1965,6 +2048,11 @@
             document.getElementById('btn-bg-remove-paired').onclick = function() {
                 clearCamBtns();
                 startCamPairing(true);
+            };
+            document.getElementById('btn-beauty').onclick = function() {
+                S.beautyOn = !S.beautyOn;
+                this.classList.toggle('active', S.beautyOn);
+                document.getElementById('cam-status').textContent = S.beautyOn ? 'Beauty filter ON' : 'Beauty filter OFF';
             };
             document.getElementById('btn-mic').onclick = function() { enableMic(); };
             document.getElementById('btn-no-mic').onclick = function() {
@@ -2065,6 +2153,16 @@
                 if (e.key === '2') S.wbTool = 'highlight';
                 if (e.key === '3') S.wbTool = 'eraser';
                 if (e.key === '4') S.wbTool = 'pointer';
+                // Camera mode toggle: C key
+                if (e.key === 'c' || e.key === 'C') {
+                    S.camMode = S.camMode === 'full' ? 'pip' : 'full';
+                    buildToolbar(); // rebuild to update active state
+                }
+                // Beauty filter: B key
+                if (e.key === 'b' || e.key === 'B') {
+                    S.beautyOn = !S.beautyOn;
+                    buildToolbar();
+                }
             });
         }
 
