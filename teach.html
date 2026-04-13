@@ -492,16 +492,31 @@
                 // Auto-select the right share mode based on what desktop requested
                 if (autoMode === 'content') {
                     S.mobileShareMode = 'screen';
-                    document.getElementById('m-status').textContent = 'Sharing screen to desktop...';
                     document.getElementById('m-share-screen').classList.add('active');
                     document.getElementById('m-share-cam').classList.remove('active');
+                    // Screen share requires a USER TAP (browser security).
+                    // Show a big button instead of auto-connecting.
+                    document.getElementById('m-status').innerHTML =
+                        '<div style="margin:12px 0;font-size:13px;color:#ffaa00;">Desktop wants your screen content</div>' +
+                        '<button id="m-tap-share" style="background:rgba(0,40,20,0.6);border:2px solid #00ff88;color:#00ff88;padding:18px 36px;font-family:inherit;font-size:16px;cursor:pointer;border-radius:8px;letter-spacing:2px;margin:8px;">TAP TO SHARE SCREEN</button>' +
+                        '<div style="margin:8px 0;font-size:10px;opacity:0.4;">Or use camera to point at your content</div>' +
+                        '<button id="m-tap-cam" style="background:transparent;border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:10px 20px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;letter-spacing:1px;">USE CAMERA INSTEAD</button>';
+                    document.getElementById('m-tap-share').onclick = function() {
+                        S.mobileShareMode = 'screen';
+                        connectMobile(autoCode);
+                    };
+                    document.getElementById('m-tap-cam').onclick = function() {
+                        S.mobileShareMode = 'camera';
+                        S.mobileFacing = 'environment';
+                        connectMobile(autoCode);
+                    };
                 } else {
                     S.mobileShareMode = 'camera';
                     document.getElementById('m-status').textContent = 'Sharing camera to desktop...';
                     document.getElementById('m-share-cam').classList.add('active');
+                    // Camera share can auto-connect (doesn't require user gesture on most browsers)
+                    setTimeout(function() { connectMobile(autoCode); }, 800);
                 }
-
-                setTimeout(function() { connectMobile(autoCode); }, 800);
                 return;
             }
 
