@@ -657,31 +657,44 @@
                     document.getElementById('m-share-cam').classList.remove('active');
                     // Screen share requires a USER TAP (browser security).
                     // Show a big button instead of auto-connecting.
-                    document.getElementById('m-status').innerHTML =
-                        '<div style="margin:12px 0;font-size:13px;color:#ffaa00;">Choose how to share from your iPad</div>' +
-
+                    var isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                    var screenShareBlock = isIOSDevice ?
+                        '<div style="background:rgba(60,30,0,0.3);border:1px solid rgba(255,170,0,0.4);border-radius:8px;padding:12px;margin:10px 0;">' +
+                        '<div style="font-size:12px;color:#ffaa00;margin-bottom:6px;">&#x26A0; iOS Safari cannot screen-share</div>' +
+                        '<div style="font-size:10px;opacity:0.7;line-height:1.5;">To share an iPad app (Notability/GoodNotes/etc), use <b>AirPlay</b> to mirror iPad to your Mac, then share that screen from your Mac desktop.</div>' +
+                        '</div>' :
                         '<div style="background:rgba(0,40,20,0.3);border:2px solid #00ff88;border-radius:8px;padding:14px;margin:10px 0;">' +
-                        '<div style="font-size:13px;color:#00ff88;letter-spacing:1px;margin-bottom:8px;">&#x1F3A8; RECOMMENDED: Native iPad App</div>' +
-                        '<div style="font-size:11px;opacity:0.7;line-height:1.5;margin-bottom:10px;">Write in <b>Notability, GoodNotes, Apple Notes, Freeform, Concepts</b> — better palm rejection, handwriting beautification, pressure sensitivity.</div>' +
-                        '<button id="m-tap-share" style="display:block;width:100%;background:#00ff88;border:none;color:#000;padding:14px;font-family:inherit;font-size:13px;font-weight:bold;cursor:pointer;border-radius:6px;letter-spacing:1px;">&#x1F5A5; SHARE SCREEN (open your app)</button>' +
-                        '<div style="font-size:9px;opacity:0.5;margin-top:8px;">After tapping, pick the app you want to share — switch to it with Apple Pencil</div>' +
+                        '<div style="font-size:13px;color:#00ff88;letter-spacing:1px;margin-bottom:8px;">&#x1F3A8; SHARE SCREEN</div>' +
+                        '<div style="font-size:11px;opacity:0.7;line-height:1.5;margin-bottom:10px;">Pick any app or window to share.</div>' +
+                        '<button id="m-tap-share" style="display:block;width:100%;background:#00ff88;border:none;color:#000;padding:14px;font-family:inherit;font-size:13px;font-weight:bold;cursor:pointer;border-radius:6px;letter-spacing:1px;">&#x1F5A5; SHARE SCREEN</button>' +
+                        '</div>';
+
+                    document.getElementById('m-status').innerHTML =
+                        '<div style="margin:12px 0;font-size:13px;color:#ffaa00;">Choose how to share</div>' +
+                        screenShareBlock +
+
+                        '<div style="background:rgba(0,20,40,0.4);border:2px solid rgba(0,255,255,0.4);border-radius:8px;padding:14px;margin:10px 0;">' +
+                        '<div style="font-size:12px;color:#00ffff;margin-bottom:8px;">&#x270F; BROWSER WRITING PAD</div>' +
+                        '<div style="font-size:10px;opacity:0.7;line-height:1.5;margin-bottom:10px;">Draw here with Apple Pencil — streams to desktop.</div>' +
+                        '<button id="m-tap-board" style="display:block;width:100%;background:rgba(0,20,40,0.8);border:1px solid #00ffff;color:#00ffff;padding:12px;font-family:inherit;font-size:12px;cursor:pointer;border-radius:6px;">OPEN WRITING PAD</button>' +
                         '</div>' +
 
-                        '<div style="background:rgba(0,20,40,0.4);border:1px solid rgba(0,255,255,0.2);border-radius:8px;padding:12px;margin:10px 0;">' +
-                        '<div style="font-size:11px;color:#00ffff;opacity:0.8;margin-bottom:6px;">Alternative: Browser writing pad</div>' +
-                        '<button id="m-tap-board" style="display:block;width:100%;background:rgba(0,20,40,0.8);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:10px;font-family:inherit;font-size:12px;cursor:pointer;border-radius:6px;">&#x270F; USE BROWSER WHITEBOARD</button>' +
-                        '</div>' +
+                        '<div style="background:rgba(0,20,40,0.3);border:1px solid rgba(0,255,255,0.2);border-radius:8px;padding:12px;margin:10px 0;">' +
+                        '<div style="font-size:11px;color:rgba(0,255,255,0.7);margin-bottom:6px;">&#x1F4F8; USE CAMERA (point at content)</div>' +
+                        '<button id="m-tap-cam" style="display:block;width:100%;background:rgba(0,20,40,0.8);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:10px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:6px;">USE BACK CAMERA</button>' +
+                        '</div>';
 
-                        '<button id="m-tap-cam" style="display:block;width:100%;background:rgba(0,20,40,0.4);border:1px solid rgba(0,255,255,0.15);color:rgba(0,255,255,0.6);padding:10px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:6px;margin:10px 0;">&#x1F4F8; USE CAMERA INSTEAD</button>';
-
-                    document.getElementById('m-tap-board').onclick = function() {
-                        startMobileWhiteboard(autoCode);
-                    };
-                    document.getElementById('m-tap-share').onclick = function() {
+                    // Share button only attached on non-iOS (iOS doesn't support it)
+                    var shareBtn = document.getElementById('m-tap-share');
+                    if (shareBtn) shareBtn.onclick = function() {
                         S.mobileShareMode = 'screen';
                         connectMobile(autoCode);
                     };
-                    document.getElementById('m-tap-cam').onclick = function() {
+
+                    var boardBtn = document.getElementById('m-tap-board');
+                    if (boardBtn) boardBtn.onclick = function() { startMobileWhiteboard(autoCode); };
+                    var camBtn = document.getElementById('m-tap-cam');
+                    if (camBtn) camBtn.onclick = function() {
                         S.mobileShareMode = 'camera';
                         S.mobileFacing = 'environment';
                         connectMobile(autoCode);
@@ -891,18 +904,32 @@
         function connectMobile(code) {
             var st = document.getElementById('m-status'), pv = document.getElementById('mobile-preview');
             st.textContent = 'Getting media...';
-            var constraints;
+
+            var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
             if (S.mobileShareMode === 'screen') {
+                // iOS Safari does NOT support getDisplayMedia reliably.
+                // Even when the function exists, it opens camera UI instead of screen picker.
+                if (isIOS) {
+                    st.innerHTML = '<div style="color:#ff5555;font-size:12px;line-height:1.5;margin:10px 0;">' +
+                        '<b>iOS does not support screen sharing from Safari.</b><br>' +
+                        'Instead, use AirPlay to mirror your iPad to your Mac/PC, or use one of these options:</div>' +
+                        '<button id="fall-board" style="display:block;width:100%;background:rgba(0,40,20,0.6);border:1px solid #00ff88;color:#00ff88;padding:12px;font-family:inherit;font-size:12px;cursor:pointer;border-radius:6px;margin:6px 0;">Use browser writing pad</button>' +
+                        '<button id="fall-cam" style="display:block;width:100%;background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:12px;font-family:inherit;font-size:12px;cursor:pointer;border-radius:6px;margin:6px 0;">Use back camera (point at iPad screen)</button>';
+                    document.getElementById('fall-board').onclick = function() { document.getElementById('mobile-ui').style.display='none'; startMobileWhiteboard(code); };
+                    document.getElementById('fall-cam').onclick = function() {
+                        S.mobileShareMode = 'camera'; S.mobileFacing = 'environment';
+                        connectMobile(code);
+                    };
+                    return;
+                }
                 if (navigator.mediaDevices.getDisplayMedia) {
                     navigator.mediaDevices.getDisplayMedia({ video: true }).then(gotStream).catch(function(e) {
-                        st.textContent = 'Screen share failed — trying camera...';
-                        // Fallback to camera if screen share denied/unsupported
-                        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: {ideal:1280}, height: {ideal:720} }, audio: false }).then(gotStream).catch(function(e2) { st.textContent = 'Failed: ' + e2.message; });
+                        st.textContent = 'Screen share denied/failed: ' + (e.message || e.name);
                     });
                 } else {
-                    // getDisplayMedia not available (older Safari) — use camera pointing at content
-                    st.textContent = 'Screen share not supported — using camera...';
-                    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: {ideal:1280}, height: {ideal:720} }, audio: false }).then(gotStream).catch(function(e) { st.textContent = 'Camera failed: ' + e.message; });
+                    st.innerHTML = '<div style="color:#ff5555;">Screen share not supported on this browser.</div>' +
+                        '<button onclick="location.reload()" style="background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:10px;margin-top:8px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:6px;">Go back</button>';
                 }
             } else {
                 navigator.mediaDevices.getUserMedia({ video: { facingMode: S.mobileFacing, width: {ideal:1280}, height: {ideal:720} }, audio: false }).then(gotStream).catch(function(e) { st.textContent = 'Camera failed: ' + e.message; });
