@@ -174,7 +174,11 @@
             <canvas id="qr-canvas" width="180" height="180" style="margin:0 auto 10px;display:block;border-radius:8px;"></canvas>
             <div id="pair-code-display" style="font-size:40px;font-weight:bold;letter-spacing:10px;margin:10px 0;text-shadow:0 0 20px rgba(0,255,255,0.5);">------</div>
             <div id="p-status" style="font-size:11px;color:rgba(0,255,255,0.5);">Generating...</div>
-            <button class="btn" id="pair-cancel" style="margin-top:10px;border-color:rgba(255,60,60,0.4);color:#ff5555;">CANCEL</button>
+            <div style="font-size:9px;opacity:0.3;margin-top:6px;">Code saved — device reconnects automatically</div>
+            <div style="margin-top:10px;">
+                <button class="btn" id="pair-cancel" style="border-color:rgba(255,60,60,0.4);color:#ff5555;">HIDE</button>
+                <button class="btn" id="pair-unpair" style="border-color:rgba(255,100,100,0.3);color:#ff8866;font-size:10px;">UNPAIR &amp; NEW CODE</button>
+            </div>
         </div>
     </div>
 
@@ -394,35 +398,85 @@
             for (var r = 0; r < mc; r++) for (var c = 0; c < mc; c++) { if (qr.isDark(r,c)) cx.fillRect(c*cs,r*cs,cs+0.5,cs+0.5); }
         }
 
-        function startPairing() {
+        // Persistent pair code (survives page reload) + auto-reconnect
+        function startPairing(reuseCode) {
             camPairMode = 'content';
-            var code = generatePairCode(); S.pairCode = code;
+            // Reuse stored code if available, otherwise generate new one
+            var code = reuseCode || localStorage.getItem('jteach_pair_code');
+            if (!code) {
+                code = generatePairCode();
+                localStorage.setItem('jteach_pair_code', code);
+            }
+            S.pairCode = code;
             document.getElementById('pair-code-display').textContent = code;
             document.getElementById('p-status').textContent = 'Waiting for content device...';
             document.getElementById('pair-overlay').style.display = 'block';
             drawQRCode(code, 'content');
-            if (S.peer) S.peer.destroy();
-            S.peer = new Peer('jteach-' + code);
-            S.peer.on('open', function() { document.getElementById('p-status').textContent = 'Code active — connect from your device'; });
-            S.peer.on('error', function(err) { document.getElementById('p-status').textContent = 'Error: ' + err.type; });
+            createDesktopPeer(code);
+        }
+
+        // Create the desktop peer with auto-reconnect logic
+        function createDesktopPeer(code) {
+            if (S.peer) { try { S.peer.destroy(); } catch(e){} }
+            var peerId = 'jteach-' + code;
+            S.peer = new Peer(peerId);
+            S.peer._pairCode = code;
+
+            S.peer.on('open', function() {
+                document.getElementById('p-status').textContent = 'Code active — waiting for device';
+                S._peerReconnecting = false;
+            });
+            S.peer.on('disconnected', function() {
+                document.getElementById('p-status').textContent = 'Signaling disconnected — reconnecting...';
+                // PeerJS disconnection is from the signaling server, not peers
+                // Try to reconnect to the signaling server
+                setTimeout(function() {
+                    if (S.peer && !S.peer.destroyed) {
+                        try { S.peer.reconnect(); } catch(e) { recreateDesktopPeer(code); }
+                    }
+                }, 2000);
+            });
+            S.peer.on('error', function(err) {
+                // 'unavailable-id' means the peer ID is taken — try a short delay and retry
+                if (err.type === 'unavailable-id') {
+                    document.getElementById('p-status').textContent = 'Reclaiming code...';
+                    setTimeout(function() { recreateDesktopPeer(code); }, 3000);
+                } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
+                    document.getElementById('p-status').textContent = 'Network issue — reconnecting...';
+                    setTimeout(function() { recreateDesktopPeer(code); }, 2000);
+                } else {
+                    document.getElementById('p-status').textContent = 'Error: ' + err.type;
+                }
+            });
             S.peer.on('call', function(call) {
                 call.answer();
                 call.on('stream', function(remoteStream) {
                     S.contentStream = remoteStream;
-                    S.contentVideo = document.createElement('video');
+                    // Reuse existing video element if possible
+                    if (!S.contentVideo) {
+                        S.contentVideo = document.createElement('video');
+                        S.contentVideo.style.display = 'none';
+                        document.body.appendChild(S.contentVideo);
+                    }
                     S.contentVideo.srcObject = remoteStream;
                     S.contentVideo.autoplay = true; S.contentVideo.playsInline = true; S.contentVideo.muted = true;
-                    S.contentVideo.play();
+                    S.contentVideo.play().catch(function(e){ console.warn('content video play:', e); });
                     S.hasContent = true;
                     document.getElementById('pair-overlay').style.display = 'none';
                     document.getElementById('content-status').textContent = 'Device connected';
                     document.getElementById('content-status').className = 'status on';
                     document.getElementById('btn-pair-device').classList.add('active');
                 });
-                call.on('close', function() { S.hasContent = false; S.contentVideo = null; });
+                call.on('close', function() {
+                    S.hasContent = false;
+                    document.getElementById('content-status').textContent = 'Device disconnected — waiting for reconnect...';
+                    document.getElementById('content-status').className = 'status';
+                });
+                S._currentCall = call;
             });
             // Data channel: iPad whiteboard sends draw commands here
             S.peer.on('connection', function(conn) {
+                S._currentDataConn = conn;
                 document.getElementById('pair-overlay').style.display = 'none';
                 document.getElementById('content-status').textContent = 'iPad writing board connected';
                 document.getElementById('content-status').className = 'status on';
@@ -483,13 +537,38 @@
                     }
                 });
                 conn.on('close', function() {
-                    document.getElementById('content-status').textContent = 'iPad disconnected';
+                    document.getElementById('content-status').textContent = 'iPad disconnected — waiting for reconnect...';
                     document.getElementById('content-status').className = 'status';
+                    S._currentDataConn = null;
                 });
             });
         }
 
-        function cancelPairing() { document.getElementById('pair-overlay').style.display = 'none'; if (S.peer) S.peer.destroy(); }
+        function recreateDesktopPeer(code) {
+            if (S._peerReconnecting) return;
+            S._peerReconnecting = true;
+            if (S.peer) { try { S.peer.destroy(); } catch(e){} }
+            setTimeout(function() {
+                createDesktopPeer(code);
+            }, 500);
+        }
+
+        function cancelPairing() {
+            document.getElementById('pair-overlay').style.display = 'none';
+            // Note: we DON'T destroy the peer here — it stays alive in background
+            // so reconnecting devices can find it. Only destroy on explicit unpair.
+        }
+
+        // Full unpair (destroy peer + clear code) — called from a new button
+        function unpairDevice() {
+            if (S.peer) { try { S.peer.destroy(); } catch(e){} S.peer = null; }
+            localStorage.removeItem('jteach_pair_code');
+            S.hasContent = false;
+            S.contentVideo && (S.contentVideo.srcObject = null);
+            document.getElementById('content-status').textContent = 'Unpaired';
+            document.getElementById('content-status').className = 'status';
+            document.getElementById('btn-pair-device').classList.remove('active');
+        }
 
         // Pair a camera source (main camera, not content)
         var camPairMode = null; // 'cam' or 'cam-bgr'
@@ -740,18 +819,58 @@
                 ev.target.value = '';
             });
 
-            // Connect via PeerJS data channel
+            // Connect via PeerJS data channel with auto-reconnect
             var dataConn = null;
-            var peer = new Peer();
-            peer.on('open', function() {
-                dataConn = peer.connect('jteach-' + code, { reliable: true });
-                dataConn.on('open', function() {
-                    statusEl.textContent = 'CONNECTED — draw here, appears on desktop';
-                    statusEl.style.color = '#00ff88';
+            var peer = null;
+            var reconnectTimer = null;
+
+            function connectDataChannel() {
+                if (peer) { try { peer.destroy(); } catch(e){} }
+                peer = new Peer();
+                peer.on('open', function() {
+                    dataConn = peer.connect('jteach-' + code, { reliable: true });
+                    dataConn.on('open', function() {
+                        statusEl.textContent = 'CONNECTED — draw here, appears on desktop';
+                        statusEl.style.color = '#00ff88';
+                    });
+                    dataConn.on('close', function() {
+                        statusEl.textContent = 'Disconnected — reconnecting in 2s...';
+                        statusEl.style.color = '#ffaa00';
+                        dataConn = null;
+                        clearTimeout(reconnectTimer);
+                        reconnectTimer = setTimeout(connectDataChannel, 2000);
+                    });
+                    dataConn.on('error', function(e) {
+                        statusEl.textContent = 'Error — retrying...';
+                        statusEl.style.color = '#ff5555';
+                        clearTimeout(reconnectTimer);
+                        reconnectTimer = setTimeout(connectDataChannel, 3000);
+                    });
                 });
-                dataConn.on('error', function(e) { statusEl.textContent = 'Data error: ' + e; });
+                peer.on('error', function(err) {
+                    statusEl.textContent = 'Peer error: ' + err.type + ' — retrying...';
+                    statusEl.style.color = '#ff5555';
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(connectDataChannel, 3000);
+                });
+                peer.on('disconnected', function() {
+                    statusEl.textContent = 'Signaling lost — reconnecting...';
+                    statusEl.style.color = '#ffaa00';
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(connectDataChannel, 2000);
+                });
+            }
+
+            // Expose for outside use (e.g. draw function checking dataConn)
+            wrap._getDataConn = function() { return dataConn; };
+
+            connectDataChannel();
+
+            // Re-reference dataConn globally in scope (hoisted var so draw code sees updates)
+            Object.defineProperty(window, '__teachDataConn', {
+                get: function() { return dataConn; },
+                configurable: true
             });
-            peer.on('error', function(err) { statusEl.textContent = 'Error: ' + err.type; });
         }
 
         function connectMobile(code) {
@@ -776,22 +895,53 @@
             function gotStream(stream) {
                 pv.srcObject = stream; pv.style.display = 'block';
                 st.textContent = 'Connecting...';
-                var peer = new Peer();
-                peer.on('open', function() {
-                    var call = peer.call('jteach-' + code, stream);
-                    if (!call) { st.textContent = 'Failed to connect'; return; }
-                    st.textContent = 'Streaming to desktop!'; st.style.color = '#00ff88';
-                    var btn = document.getElementById('pair-connect');
-                    btn.textContent = 'DISCONNECT'; btn.style.color = '#ff5555'; btn.style.borderColor = 'rgba(255,60,60,0.4)';
-                    btn.onclick = function() {
-                        call.close(); stream.getTracks().forEach(function(t){t.stop();}); pv.srcObject=null; pv.style.display='none';
-                        st.textContent='Disconnected'; st.style.color='';
-                        btn.textContent='CONNECT'; btn.style.color=''; btn.style.borderColor='';
-                        btn.onclick=function(){var c=document.getElementById('pair-input').value.trim();if(c.length===6)connectMobile(c);};
-                        peer.destroy();
-                    };
-                });
-                peer.on('error', function(err) { st.textContent = 'Error: ' + err.type; });
+                var peer = null;
+                var currentCall = null;
+                var reconnectT = null;
+                var userDisconnected = false;
+
+                function tryConnect() {
+                    if (userDisconnected) return;
+                    if (peer) { try { peer.destroy(); } catch(e){} }
+                    peer = new Peer();
+                    peer.on('open', function() {
+                        var call = peer.call('jteach-' + code, stream);
+                        if (!call) { st.textContent = 'Failed to connect — retrying...'; clearTimeout(reconnectT); reconnectT = setTimeout(tryConnect, 2500); return; }
+                        currentCall = call;
+                        st.textContent = 'Streaming to desktop!'; st.style.color = '#00ff88';
+                        call.on('close', function() {
+                            if (userDisconnected) return;
+                            st.textContent = 'Stream lost — reconnecting...'; st.style.color = '#ffaa00';
+                            clearTimeout(reconnectT); reconnectT = setTimeout(tryConnect, 2000);
+                        });
+                    });
+                    peer.on('error', function(err) {
+                        if (userDisconnected) return;
+                        st.textContent = 'Error: ' + err.type + ' — retrying...'; st.style.color = '#ff5555';
+                        clearTimeout(reconnectT); reconnectT = setTimeout(tryConnect, 3000);
+                    });
+                    peer.on('disconnected', function() {
+                        if (userDisconnected) return;
+                        st.textContent = 'Signaling lost — reconnecting...'; st.style.color = '#ffaa00';
+                        clearTimeout(reconnectT); reconnectT = setTimeout(tryConnect, 2000);
+                    });
+                }
+
+                var btn = document.getElementById('pair-connect');
+                btn.textContent = 'DISCONNECT'; btn.style.color = '#ff5555'; btn.style.borderColor = 'rgba(255,60,60,0.4)';
+                btn.onclick = function() {
+                    userDisconnected = true;
+                    clearTimeout(reconnectT);
+                    if (currentCall) { try { currentCall.close(); } catch(e){} }
+                    stream.getTracks().forEach(function(t){t.stop();});
+                    pv.srcObject = null; pv.style.display = 'none';
+                    st.textContent = 'Disconnected'; st.style.color = '';
+                    btn.textContent = 'CONNECT'; btn.style.color = ''; btn.style.borderColor = '';
+                    btn.onclick = function(){var c=document.getElementById('pair-input').value.trim();if(c.length===6)connectMobile(c);};
+                    if (peer) { try { peer.destroy(); } catch(e){} }
+                };
+
+                tryConnect();
             }
         }
 
@@ -2130,6 +2280,13 @@
             });
             document.getElementById('btn-load-pdf').onclick = function() { openPDFPicker(); };
             document.getElementById('btn-pair-device').onclick = function() { startPairing(); };
+            var unpairBtn = document.getElementById('pair-unpair');
+            if (unpairBtn) unpairBtn.onclick = function() {
+                unpairDevice();
+                // Start fresh pairing
+                startPairing(generatePairCode());
+                localStorage.setItem('jteach_pair_code', S.pairCode);
+            };
             document.getElementById('btn-screen-share').onclick = function() { startScreenShare(); };
             document.getElementById('btn-no-content').onclick = function() {
                 S.hasContent = false;
@@ -2265,6 +2422,19 @@
                 initMobileUI();
             } else {
                 initSetup();
+                // Auto-restore previous pairing on page load (desktop)
+                var savedCode = localStorage.getItem('jteach_pair_code');
+                if (savedCode && savedCode.length === 6) {
+                    // Start peer in background without showing overlay (it'll silently wait for device)
+                    setTimeout(function() {
+                        camPairMode = 'content';
+                        S.pairCode = savedCode;
+                        createDesktopPeer(savedCode);
+                        document.getElementById('content-status').textContent = 'Listening for paired device (code: ' + savedCode + ')';
+                        document.getElementById('content-status').className = 'status';
+                        document.getElementById('btn-pair-device').classList.add('active');
+                    }, 500);
+                }
             }
 
             S.lastFpsTime = performance.now();
