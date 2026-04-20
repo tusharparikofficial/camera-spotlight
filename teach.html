@@ -170,6 +170,10 @@
         <div class="p-card">
             <div style="font-size:13px;letter-spacing:4px;opacity:0.7;margin-bottom:20px;">P A I R &nbsp; D E V I C E</div>
             <div style="font-size:11px;opacity:0.5;">Open <span style="color:#ffaa00;">jarvis.tuxy.online/teach</span> on your iPad/phone</div>
+            <div style="font-size:10px;opacity:0.35;margin:8px 0;line-height:1.5;">
+                <b style="color:#00ff88;">Pro tip:</b> On iPad, scan QR → tap SHARE SCREEN → open<br>
+                Notability / GoodNotes / Apple Notes for best handwriting
+            </div>
             <div style="font-size:10px;opacity:0.3;margin:12px 0;">Scan QR:</div>
             <canvas id="qr-canvas" width="180" height="180" style="margin:0 auto 10px;display:block;border-radius:8px;"></canvas>
             <div id="pair-code-display" style="font-size:40px;font-weight:bold;letter-spacing:10px;margin:10px 0;text-shadow:0 0 20px rgba(0,255,255,0.5);">------</div>
@@ -654,11 +658,22 @@
                     // Screen share requires a USER TAP (browser security).
                     // Show a big button instead of auto-connecting.
                     document.getElementById('m-status').innerHTML =
-                        '<div style="margin:12px 0;font-size:13px;color:#ffaa00;">How do you want to share content?</div>' +
-                        '<button id="m-tap-board" style="display:block;width:100%;background:rgba(0,40,20,0.6);border:2px solid #00ff88;color:#00ff88;padding:18px;font-family:inherit;font-size:15px;cursor:pointer;border-radius:8px;letter-spacing:2px;margin:8px 0;">&#x270F; USE AS WRITING BOARD</button>' +
-                        '<div style="font-size:9px;opacity:0.3;margin-bottom:12px;">Draw with Apple Pencil / finger — streams to desktop live</div>' +
-                        '<button id="m-tap-share" style="display:block;width:100%;background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:12px;font-family:inherit;font-size:12px;cursor:pointer;border-radius:6px;margin:6px 0;">&#x1F5A5; SHARE SCREEN</button>' +
-                        '<button id="m-tap-cam" style="display:block;width:100%;background:rgba(0,20,40,0.6);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:12px;font-family:inherit;font-size:12px;cursor:pointer;border-radius:6px;margin:6px 0;">&#x1F4F8; USE CAMERA</button>';
+                        '<div style="margin:12px 0;font-size:13px;color:#ffaa00;">Choose how to share from your iPad</div>' +
+
+                        '<div style="background:rgba(0,40,20,0.3);border:2px solid #00ff88;border-radius:8px;padding:14px;margin:10px 0;">' +
+                        '<div style="font-size:13px;color:#00ff88;letter-spacing:1px;margin-bottom:8px;">&#x1F3A8; RECOMMENDED: Native iPad App</div>' +
+                        '<div style="font-size:11px;opacity:0.7;line-height:1.5;margin-bottom:10px;">Write in <b>Notability, GoodNotes, Apple Notes, Freeform, Concepts</b> — better palm rejection, handwriting beautification, pressure sensitivity.</div>' +
+                        '<button id="m-tap-share" style="display:block;width:100%;background:#00ff88;border:none;color:#000;padding:14px;font-family:inherit;font-size:13px;font-weight:bold;cursor:pointer;border-radius:6px;letter-spacing:1px;">&#x1F5A5; SHARE SCREEN (open your app)</button>' +
+                        '<div style="font-size:9px;opacity:0.5;margin-top:8px;">After tapping, pick the app you want to share — switch to it with Apple Pencil</div>' +
+                        '</div>' +
+
+                        '<div style="background:rgba(0,20,40,0.4);border:1px solid rgba(0,255,255,0.2);border-radius:8px;padding:12px;margin:10px 0;">' +
+                        '<div style="font-size:11px;color:#00ffff;opacity:0.8;margin-bottom:6px;">Alternative: Browser writing pad</div>' +
+                        '<button id="m-tap-board" style="display:block;width:100%;background:rgba(0,20,40,0.8);border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:10px;font-family:inherit;font-size:12px;cursor:pointer;border-radius:6px;">&#x270F; USE BROWSER WHITEBOARD</button>' +
+                        '</div>' +
+
+                        '<button id="m-tap-cam" style="display:block;width:100%;background:rgba(0,20,40,0.4);border:1px solid rgba(0,255,255,0.15);color:rgba(0,255,255,0.6);padding:10px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:6px;margin:10px 0;">&#x1F4F8; USE CAMERA INSTEAD</button>';
+
                     document.getElementById('m-tap-board').onclick = function() {
                         startMobileWhiteboard(autoCode);
                     };
