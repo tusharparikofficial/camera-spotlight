@@ -1834,9 +1834,10 @@
                     img.src = url;
                 };
                 S.bgSocket.onclose = function() {
-                    document.getElementById('cam-status').textContent = 'GPU service disconnected — reconnecting...';
+                    var url = bgServiceURL();
+                    document.getElementById('cam-status').textContent = 'GPU service unreachable at ' + url + ' — check bg-remove.service is running';
                     S.bgSocketBusy = false;
-                    if (S.bgRemovalGPU) setTimeout(connectBGService, 2000);
+                    if (S.bgRemovalGPU) setTimeout(connectBGService, 3000);
                 };
                 S.bgSocket.onerror = function(e) {
                     console.warn('bg service error', e);
