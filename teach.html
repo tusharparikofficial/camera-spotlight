@@ -103,7 +103,8 @@
                 <div class="row">
                     <button class="btn" id="btn-pair-device"><span class="icon">&#x1F4F1;</span>Pair iPad/Phone</button>
                     <button class="btn" id="btn-screen-share"><span class="icon">&#x1F5A5;</span>Share Screen</button>
-                    <button class="btn" id="btn-load-pdf"><span class="icon">&#x1F4C4;</span>Load PDF</button>
+                    <button class="btn" id="btn-load-pdf"><span class="icon">&#x1F4C4;</span>Load PDF / Image / HTML</button>
+                    <button class="btn" id="btn-load-url"><span class="icon">&#x1F310;</span>Load URL</button>
                     <button class="btn" id="btn-no-content"><span class="icon">&#x2716;</span>No Content Source</button>
                 </div>
                 <div class="status" id="content-status">No content source</div>
@@ -230,7 +231,7 @@
         </div>
         <canvas id="pdf-canvas" style="width:100%;background:#222;"></canvas>
     </div>
-    <input type="file" id="pdf-file-input" accept=".pdf" style="display:none;">
+    <input type="file" id="pdf-file-input" accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.svg,.html,.htm" style="display:none;">
 
     <!-- Teleprompter (not captured in recording - pure DOM overlay) -->
     <div id="teleprompter" style="display:none;position:fixed;top:0;left:0;right:0;z-index:55;height:80px;background:linear-gradient(to bottom,rgba(0,0,0,0.85),transparent);overflow:hidden;pointer-events:none;">
@@ -2099,15 +2100,101 @@
                 var file = e.target.files[0];
                 if (!file) return;
                 document.getElementById('pdf-name').textContent = file.name;
+                var name = file.name.toLowerCase();
+                var type = file.type || '';
                 var reader = new FileReader();
-                reader.onload = function(ev) { loadPDFData(new Uint8Array(ev.target.result)); };
-                reader.readAsArrayBuffer(file);
+                if (name.endsWith('.pdf') || type === 'application/pdf') {
+                    reader.onload = function(ev) { loadPDFData(new Uint8Array(ev.target.result)); };
+                    reader.readAsArrayBuffer(file);
+                } else if (type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(name)) {
+                    reader.onload = function(ev) { loadImageData(ev.target.result); };
+                    reader.readAsDataURL(file);
+                } else if (name.endsWith('.html') || name.endsWith('.htm') || type === 'text/html') {
+                    reader.onload = function(ev) { loadHTMLContent(ev.target.result); };
+                    reader.readAsText(file);
+                } else {
+                    alert('Unsupported file type: ' + (type || name));
+                }
                 e.target.value = '';
             });
         }
 
+        // Load image into the PDF panel (reuses the same draggable window)
+        function loadImageData(dataURL) {
+            pdfDoc = null; pdfTotalPages = 1; pdfPage = 1;
+            var img = new Image();
+            img.onload = function() {
+                var canvas = document.getElementById('pdf-canvas');
+                var ctx = canvas.getContext('2d');
+                var maxW = 1200, maxH = 900;
+                var scale = Math.min(maxW / img.width, maxH / img.height, 1);
+                canvas.width = img.width * scale;
+                canvas.height = img.height * scale;
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                var panel = document.getElementById('pdf-panel');
+                panel.style.display = 'block';
+                panel.style.left = '60px'; panel.style.top = '70px';
+                panel.style.width = Math.min(canvas.width, 700) + 'px';
+                panel.style.height = 'auto';
+                document.getElementById('pdf-page-label').textContent = '1/1';
+            };
+            img.src = dataURL;
+        }
+
+        // Load HTML content into an iframe inside the PDF panel
+        function loadHTMLContent(html) {
+            showHTMLPanel(html, null);
+        }
+
+        function showHTMLPanel(html, url) {
+            pdfDoc = null;
+            var panel = document.getElementById('pdf-panel');
+            panel.style.display = 'block';
+            panel.style.left = '60px'; panel.style.top = '70px';
+            panel.style.width = '800px'; panel.style.height = '600px';
+
+            // Hide canvas, show iframe
+            var canvas = document.getElementById('pdf-canvas');
+            canvas.style.display = 'none';
+            var frame = document.getElementById('pdf-iframe');
+            if (!frame) {
+                frame = document.createElement('iframe');
+                frame.id = 'pdf-iframe';
+                frame.style.cssText = 'width:100%;height:calc(100% - 36px);border:0;background:#fff;display:block;';
+                // pointer-events toggled based on active tool
+                frame.style.pointerEvents = 'none';
+                panel.appendChild(frame);
+            } else {
+                frame.style.display = 'block';
+            }
+            if (url) {
+                frame.removeAttribute('srcdoc');
+                frame.src = url;
+            } else {
+                frame.removeAttribute('src');
+                frame.srcdoc = html;
+            }
+            document.getElementById('pdf-page-label').textContent = url ? 'URL' : 'HTML';
+            // Track pointer-events based on current tool
+            updateIframePointerEvents();
+        }
+
+        // Tool-aware iframe interaction: mouse tool = clickable; pencil = draw on top
+        function updateIframePointerEvents() {
+            var frame = document.getElementById('pdf-iframe');
+            if (!frame) return;
+            // "mouse" / "cursor" mode = pass clicks to iframe
+            // Any drawing tool (pen, highlight, eraser, text, stamp, shape) = draw on top
+            var passThrough = S.wbTool === 'mouse' || S.wbTool === 'cursor';
+            frame.style.pointerEvents = passThrough ? 'auto' : 'none';
+        }
+
         function loadPDFData(data) {
             if (typeof pdfjsLib === 'undefined') { alert('PDF.js not loaded'); return; }
+            // Hide iframe if was open, show canvas
+            var frame = document.getElementById('pdf-iframe');
+            if (frame) frame.style.display = 'none';
+            document.getElementById('pdf-canvas').style.display = 'block';
             pdfjsLib.getDocument({ data: data }).promise.then(function(pdf) {
                 pdfDoc = pdf;
                 pdfTotalPages = pdf.numPages;
@@ -2160,17 +2247,25 @@
 
             // Drawing tools
             var drawTools = [
+                { id: 'mouse', icon: '\uD83D\uDDB1', label: 'Mouse (interact with HTML)' },
                 { id: 'pen', icon: '\u270F', label: 'Pen' },
                 { id: 'highlight', icon: '\uD83D\uDD8C', label: 'Highlight' },
                 { id: 'eraser', icon: '\uD83E\uDDF9', label: 'Eraser' },
                 { id: 'text', icon: 'T', label: 'Text' },
-                { id: 'pointer', icon: '\uD83D\uDD34', label: 'Pointer' },
+                { id: 'pointer', icon: '\uD83D\uDD34', label: 'Laser pointer' },
             ];
             drawTools.forEach(function(t) {
                 addBtn(t.icon, t.label, S.wbTool === t.id ? 'active' : '', function() {
                     S.wbTool = t.id; S.shapeType = null;
                     tb.querySelectorAll('.tool').forEach(function(b) { b.classList.remove('active'); });
                     this.classList.add('active');
+                    // When mouse tool is active, let the wb-canvas pass clicks through to the iframe
+                    if (t.id === 'mouse') {
+                        S.wbCanvas.style.pointerEvents = 'none';
+                    } else {
+                        S.wbCanvas.style.pointerEvents = 'auto';
+                    }
+                    updateIframePointerEvents();
                 });
             });
 
@@ -2495,6 +2590,12 @@
                 };
             });
             document.getElementById('btn-load-pdf').onclick = function() { openPDFPicker(); };
+            document.getElementById('btn-load-url').onclick = function() {
+                var url = prompt('Enter URL to load:', 'https://');
+                if (!url) return;
+                if (!/^https?:\/\//.test(url)) url = 'https://' + url;
+                showHTMLPanel(null, url);
+            };
             document.getElementById('btn-pair-device').onclick = function() { startPairing(); };
             var unpairBtn = document.getElementById('pair-unpair');
             if (unpairBtn) unpairBtn.onclick = function() {
