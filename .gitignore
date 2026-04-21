@@ -1,0 +1,5 @@
+bg_service/venv/
+bg_service/models/
+bg_service/__pycache__/
+bg_service/*.pyc
+.DS_Store
