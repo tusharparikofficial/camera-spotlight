@@ -1708,58 +1708,36 @@
         // BACKGROUND REMOVAL (Selfie Segmentation)
         // ═══════════════════════════════════════════════════════════
 
-        // High-quality BG removal pipeline:
-        // 1. MediaPipe gives raw mask (low-res, jagged edges)
-        // 2. Upscale to video resolution with bilinear smoothing
-        // 3. Apply feathering blur for soft edges
-        // 4. Temporal smoothing: blend current mask with previous (reduces flicker)
-        // 5. In render loop: composite LIVE video (60fps) with smoothed mask
+        // BG removal pipeline — simple and correct:
+        // 1. MediaPipe mask is already soft/grayscale (no contrast boost needed)
+        // 2. Upscale to video resolution with light 1px feather only
+        // 3. CLEAR old mask each frame (no temporal smoothing — it causes ghost trails)
+        // 4. In render loop: composite LIVE video (60fps) with current mask
         function initBGRemoval() {
             try {
                 S.segmentation = new SelfieSegmentation({ locateFile: function(f) { return 'lib/selfie_seg/' + f; } });
-                S.segmentation.setOptions({ modelSelection: 1 }); // 1 = landscape model, better for faces
+                S.segmentation.setOptions({ modelSelection: 1 });
                 S.segmentation.onResults(function(results) {
                     if (!results.segmentationMask) return;
                     var vid = S.localVideo;
                     if (!vid || vid.readyState < 2) return;
                     var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
 
-                    // Lazy-init the processed mask canvas at VIDEO resolution (not low-res mask resolution)
                     if (!S.maskHighCanvas) {
                         S.maskHighCanvas = document.createElement('canvas');
-                        S.maskHighCtx = S.maskHighCanvas.getContext('2d', { willReadFrequently: false });
-                        S.maskPrevCanvas = document.createElement('canvas');
-                        S.maskPrevCtx = S.maskPrevCanvas.getContext('2d', { willReadFrequently: false });
+                        S.maskHighCtx = S.maskHighCanvas.getContext('2d');
                     }
                     if (S.maskHighCanvas.width !== vw) {
                         S.maskHighCanvas.width = vw; S.maskHighCanvas.height = vh;
-                        S.maskPrevCanvas.width = vw; S.maskPrevCanvas.height = vh;
                     }
 
                     var mc = S.maskHighCtx;
-                    // Step 1: save current mask as "previous" for next frame's smoothing
-                    //   (before we overwrite maskHighCanvas with the new mask)
-                    if (S._maskHasPrev) {
-                        S.maskPrevCtx.clearRect(0, 0, vw, vh);
-                        S.maskPrevCtx.drawImage(S.maskHighCanvas, 0, 0);
-                    }
-
-                    // Step 2: upscale raw mask to full video resolution with feathering
+                    // Clear completely each frame — no temporal smoothing, no ghost trails
                     mc.clearRect(0, 0, vw, vh);
-                    mc.filter = 'blur(4px) contrast(1.8)'; // blur softens edges, contrast keeps tight person outline
+                    // Light feather only (1px) — MediaPipe mask is already soft
+                    mc.filter = 'blur(1px)';
                     mc.drawImage(results.segmentationMask, 0, 0, vw, vh);
                     mc.filter = 'none';
-
-                    // Step 3: temporal smoothing — blend 70% new + 30% previous (reduces flicker)
-                    if (S._maskHasPrev) {
-                        mc.globalAlpha = 0.3;
-                        mc.drawImage(S.maskPrevCanvas, 0, 0);
-                        mc.globalAlpha = 1;
-                    }
-                    S._maskHasPrev = true;
-
-                    // maskHighCanvas now has a high-quality, smooth, temporally stable mask
-                    // ready to be used in drawBGRemoved (which runs at 60fps with live video)
                 });
             } catch(e) { console.warn('Selfie seg failed:', e); S.bgRemoval = false; }
         }
