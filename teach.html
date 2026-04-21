@@ -54,9 +54,9 @@
 </head>
 <body>
     <video id="localVideo" autoplay playsinline muted></video>
-    <div id="canvas-wrap" style="display:none;position:fixed;inset:0;z-index:0;">
-        <canvas id="bg-canvas" style="position:absolute;inset:0;"></canvas>
-        <canvas id="wb-canvas" style="position:absolute;inset:0;cursor:crosshair;"></canvas>
+    <div id="canvas-wrap" style="display:none;position:fixed;inset:0;">
+        <canvas id="bg-canvas" style="position:absolute;inset:0;z-index:0;"></canvas>
+        <canvas id="wb-canvas" style="position:absolute;inset:0;cursor:crosshair;z-index:46;"></canvas>
     </div>
 
     <!-- Toolbar + Colors (built dynamically by JS) -->
@@ -214,7 +214,7 @@
 
     <!-- PDF Viewer (draggable, resizable DOM overlay - captured via drawImage on the embed) -->
     <div id="pdf-panel" style="display:none;position:fixed;z-index:45;border:2px solid rgba(0,255,255,0.3);border-radius:8px;overflow:hidden;background:#000;box-shadow:0 0 30px rgba(0,255,255,0.15);resize:both;">
-        <div id="pdf-titlebar" style="background:rgba(0,15,30,0.9);padding:6px 12px;cursor:move;display:flex;justify-content:space-between;align-items:center;">
+        <div id="pdf-titlebar" style="background:rgba(0,15,30,0.95);padding:6px 12px;cursor:move;display:flex;justify-content:space-between;align-items:center;position:relative;z-index:47;">
             <span style="font-size:10px;color:#00ffff;letter-spacing:1px;" id="pdf-name">PDF</span>
             <div>
                 <button id="pdf-prev" style="background:none;border:1px solid rgba(0,255,255,0.3);color:#00ffff;padding:2px 8px;cursor:pointer;font-family:inherit;font-size:10px;border-radius:3px;margin:0 2px;">&#x25C0; Prev</button>
