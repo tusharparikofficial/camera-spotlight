@@ -298,6 +298,8 @@
             // GPU bg removal via WebSocket service
             bgRemovalGPU: false, bgSocket: null, bgSocketBusy: false, bgJpegCanvas: null, bgJpegCtx: null,
             _bgGpuLastSend: 0, bgMaskImg: null,
+            // Snap service (URL/HTML rendering for recording)
+            snapSocket: null, iframeSnapshot: null, _snapBusy: false, _snapPollActive: false,
             // Stamps
             stampMode: null, // 'check','cross','star','important','correct','wrong'
             // Templates
@@ -1086,19 +1088,60 @@
         }
 
         // Draw PDF panel onto the background canvas (so it's captured in recording)
+        // Draw the content panel (PDF/image/HTML-URL) onto the background canvas
+        // so it's captured in the recording. Uses the actual panel rect on screen.
         function drawPDFOnCanvas(ctx) {
             var panel = document.getElementById('pdf-panel');
             if (!panel || panel.style.display === 'none') return;
-            var pdfCanvas = document.getElementById('pdf-canvas');
-            if (!pdfCanvas || pdfCanvas.width === 0) return;
-            // Get the panel's position and size
             var rect = panel.getBoundingClientRect();
+            if (rect.width < 10 || rect.height < 10) return;
+
             ctx.save();
-            ctx.fillStyle = 'rgba(0,0,0,0.85)';
+            // Panel background
+            ctx.fillStyle = 'rgba(0,0,0,0.9)';
             ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
-            ctx.drawImage(pdfCanvas, rect.left, rect.top + 30, rect.width, rect.height - 30);
+
+            var contentTop = rect.top + 30; // titlebar takes ~30px
+            var contentH = Math.max(0, rect.height - 30);
+
+            // PDF / image content on the pdf-canvas
+            var pdfCanvas = document.getElementById('pdf-canvas');
+            if (pdfCanvas && pdfCanvas.width > 0 && pdfCanvas.style.display !== 'none') {
+                ctx.drawImage(pdfCanvas, rect.left, contentTop, rect.width, contentH);
+            }
+
+            // HTML/URL iframe — use the server-side snapshot if available
+            var frame = document.getElementById('pdf-iframe');
+            if (frame && frame.style.display !== 'none') {
+                if (S.iframeSnapshot) {
+                    ctx.drawImage(S.iframeSnapshot, rect.left, contentTop, rect.width, contentH);
+                } else {
+                    // Placeholder until first snapshot arrives
+                    ctx.fillStyle = '#0a1a30';
+                    ctx.fillRect(rect.left, contentTop, rect.width, contentH);
+                    ctx.fillStyle = 'rgba(0,255,255,0.5)';
+                    ctx.font = '14px ' + F;
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Capturing web content...', rect.left + rect.width/2, contentTop + contentH/2);
+                }
+            }
+
+            // Titlebar strip
+            ctx.fillStyle = 'rgba(0,15,30,0.95)';
+            ctx.fillRect(rect.left, rect.top, rect.width, 30);
+            ctx.fillStyle = 'rgba(0,255,255,0.7)';
+            ctx.font = '10px ' + F; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            var nameEl = document.getElementById('pdf-name');
+            ctx.fillText(nameEl ? nameEl.textContent : '', rect.left + 12, rect.top + 15);
+            var pageLabel = document.getElementById('pdf-page-label');
+            if (pageLabel) {
+                ctx.textAlign = 'right';
+                ctx.fillStyle = 'rgba(0,255,255,0.5)';
+                ctx.fillText(pageLabel.textContent, rect.left + rect.width - 12, rect.top + 15);
+            }
+
             // Border
-            ctx.strokeStyle = 'rgba(0,255,255,0.2)'; ctx.lineWidth = 1;
+            ctx.strokeStyle = 'rgba(0,255,255,0.3)'; ctx.lineWidth = 2;
             ctx.strokeRect(rect.left, rect.top, rect.width, rect.height);
             ctx.restore();
         }
@@ -2162,7 +2205,6 @@
                 frame = document.createElement('iframe');
                 frame.id = 'pdf-iframe';
                 frame.style.cssText = 'width:100%;height:calc(100% - 36px);border:0;background:#fff;display:block;';
-                // pointer-events toggled based on active tool
                 frame.style.pointerEvents = 'none';
                 panel.appendChild(frame);
             } else {
@@ -2176,8 +2218,78 @@
                 frame.srcdoc = html;
             }
             document.getElementById('pdf-page-label').textContent = url ? 'URL' : 'HTML';
-            // Track pointer-events based on current tool
             updateIframePointerEvents();
+
+            // Also open a snap server session so the page appears in recording
+            connectSnapService(url, html);
+        }
+
+        // ── URL/HTML screenshot service (for recording iframes) ──
+        function snapServiceURL() {
+            if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') return 'ws://localhost:8084';
+            return 'wss://snap.tuxy.online';
+        }
+
+        function connectSnapService(url, html) {
+            if (S.snapSocket) { try { S.snapSocket.close(); } catch(e){} }
+            S.iframeSnapshot = null;
+            try {
+                S.snapSocket = new WebSocket(snapServiceURL());
+                S.snapSocket.binaryType = 'arraybuffer';
+                S.snapSocket.onopen = function() {
+                    // Open the URL/HTML
+                    var cmd = { cmd: 'open' };
+                    if (url) cmd.url = url;
+                    else if (html) cmd.html = html;
+                    S.snapSocket.send(JSON.stringify(cmd));
+                    // After open, start polling screenshots
+                    setTimeout(function() {
+                        S._snapPollActive = true;
+                        pollSnapshot();
+                    }, 1200); // give page time to load
+                };
+                S.snapSocket.onmessage = function(ev) {
+                    if (typeof ev.data === 'string') {
+                        // Control response, ignore for now
+                        return;
+                    }
+                    // Binary JPEG screenshot
+                    var blob = new Blob([ev.data], { type: 'image/jpeg' });
+                    var u = URL.createObjectURL(blob);
+                    var img = new Image();
+                    img.onload = function() {
+                        S.iframeSnapshot = img;
+                        URL.revokeObjectURL(u);
+                        S._snapBusy = false;
+                    };
+                    img.src = u;
+                };
+                S.snapSocket.onclose = function() { S._snapPollActive = false; };
+                S.snapSocket.onerror = function() { S._snapPollActive = false; };
+            } catch(e) { console.warn('snap service connect failed:', e); }
+        }
+
+        function pollSnapshot() {
+            if (!S._snapPollActive || !S.snapSocket || S.snapSocket.readyState !== WebSocket.OPEN) return;
+            if (S._snapBusy) { setTimeout(pollSnapshot, 200); return; }
+            S._snapBusy = true;
+            var frame = document.getElementById('pdf-iframe');
+            var w = 800, h = 600;
+            if (frame) {
+                var r = frame.getBoundingClientRect();
+                w = Math.max(400, Math.round(r.width));
+                h = Math.max(300, Math.round(r.height));
+            }
+            try {
+                S.snapSocket.send(JSON.stringify({ cmd: 'shot', w: w, h: h }));
+            } catch(e) { S._snapBusy = false; }
+            // Poll again ~2 fps (snapshots are expensive)
+            setTimeout(pollSnapshot, 500);
+        }
+
+        function sendSnapCommand(cmd) {
+            if (!S.snapSocket || S.snapSocket.readyState !== WebSocket.OPEN) return;
+            try { S.snapSocket.send(JSON.stringify(cmd)); } catch(e) {}
         }
 
         // Tool-aware iframe interaction: mouse tool = clickable; pencil = draw on top
