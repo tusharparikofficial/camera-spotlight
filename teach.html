@@ -289,6 +289,8 @@
             tpActive: false, tpText: '', tpSpeed: 1.5, tpPos: 0,
             // Background removal
             bgRemoval: false, segmentation: null, segCanvas: null, segCtx: null, segMask: null,
+            maskHighCanvas: null, maskHighCtx: null, maskPrevCanvas: null, maskPrevCtx: null, _maskHasPrev: false,
+            compCanvas: null, compCtx: null,
             // Stamps
             stampMode: null, // 'check','cross','star','important','correct','wrong'
             // Templates
@@ -1706,54 +1708,110 @@
         // BACKGROUND REMOVAL (Selfie Segmentation)
         // ═══════════════════════════════════════════════════════════
 
+        // High-quality BG removal pipeline:
+        // 1. MediaPipe gives raw mask (low-res, jagged edges)
+        // 2. Upscale to video resolution with bilinear smoothing
+        // 3. Apply feathering blur for soft edges
+        // 4. Temporal smoothing: blend current mask with previous (reduces flicker)
+        // 5. In render loop: composite LIVE video (60fps) with smoothed mask
         function initBGRemoval() {
             try {
                 S.segmentation = new SelfieSegmentation({ locateFile: function(f) { return 'lib/selfie_seg/' + f; } });
-                S.segmentation.setOptions({ modelSelection: 1 });
+                S.segmentation.setOptions({ modelSelection: 1 }); // 1 = landscape model, better for faces
                 S.segmentation.onResults(function(results) {
-                    S.segMask = results.segmentationMask;
-                    // Immediately composite the person
-                    if (S.localVideo && S.localVideo.readyState >= 2) {
-                        var vid = S.localVideo;
-                        var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
-                        if (!S.segCanvas) { S.segCanvas = document.createElement('canvas'); S.segCtx = S.segCanvas.getContext('2d'); }
-                        S.segCanvas.width = vw; S.segCanvas.height = vh;
-                        var sc = S.segCtx;
-                        // Draw video frame first
-                        sc.clearRect(0, 0, vw, vh);
-                        sc.save(); sc.translate(vw, 0); sc.scale(-1, 1);
-                        sc.drawImage(vid, 0, 0, vw, vh);
-                        sc.restore();
-                        // Use mask to cut out background (keep person)
-                        sc.globalCompositeOperation = 'destination-in';
-                        sc.drawImage(results.segmentationMask, 0, 0, vw, vh);
-                        sc.globalCompositeOperation = 'source-over';
+                    if (!results.segmentationMask) return;
+                    var vid = S.localVideo;
+                    if (!vid || vid.readyState < 2) return;
+                    var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
+
+                    // Lazy-init the processed mask canvas at VIDEO resolution (not low-res mask resolution)
+                    if (!S.maskHighCanvas) {
+                        S.maskHighCanvas = document.createElement('canvas');
+                        S.maskHighCtx = S.maskHighCanvas.getContext('2d', { willReadFrequently: false });
+                        S.maskPrevCanvas = document.createElement('canvas');
+                        S.maskPrevCtx = S.maskPrevCanvas.getContext('2d', { willReadFrequently: false });
                     }
+                    if (S.maskHighCanvas.width !== vw) {
+                        S.maskHighCanvas.width = vw; S.maskHighCanvas.height = vh;
+                        S.maskPrevCanvas.width = vw; S.maskPrevCanvas.height = vh;
+                    }
+
+                    var mc = S.maskHighCtx;
+                    // Step 1: save current mask as "previous" for next frame's smoothing
+                    //   (before we overwrite maskHighCanvas with the new mask)
+                    if (S._maskHasPrev) {
+                        S.maskPrevCtx.clearRect(0, 0, vw, vh);
+                        S.maskPrevCtx.drawImage(S.maskHighCanvas, 0, 0);
+                    }
+
+                    // Step 2: upscale raw mask to full video resolution with feathering
+                    mc.clearRect(0, 0, vw, vh);
+                    mc.filter = 'blur(4px) contrast(1.8)'; // blur softens edges, contrast keeps tight person outline
+                    mc.drawImage(results.segmentationMask, 0, 0, vw, vh);
+                    mc.filter = 'none';
+
+                    // Step 3: temporal smoothing — blend 70% new + 30% previous (reduces flicker)
+                    if (S._maskHasPrev) {
+                        mc.globalAlpha = 0.3;
+                        mc.drawImage(S.maskPrevCanvas, 0, 0);
+                        mc.globalAlpha = 1;
+                    }
+                    S._maskHasPrev = true;
+
+                    // maskHighCanvas now has a high-quality, smooth, temporally stable mask
+                    // ready to be used in drawBGRemoved (which runs at 60fps with live video)
                 });
             } catch(e) { console.warn('Selfie seg failed:', e); S.bgRemoval = false; }
         }
 
         function processSegFrame() {
             if (!S.bgRemoval || !S.segmentation) return;
-            // Wait for video to be ready
             if (!S.localVideo || S.localVideo.readyState < 2) {
                 if (S.bgRemoval) setTimeout(processSegFrame, 200);
                 return;
             }
             S.segmentation.send({ image: S.localVideo }).then(function() {
-                if (S.bgRemoval) setTimeout(processSegFrame, 80);
+                if (S.bgRemoval) setTimeout(processSegFrame, 60); // ~16fps segmentation
             }).catch(function(e) {
                 console.warn('Seg frame error:', e);
                 if (S.bgRemoval) setTimeout(processSegFrame, 500);
             });
         }
 
+        // Composite LIVE video (60fps) with the smoothed mask in the render loop.
+        // This means person moves fluidly even when mask only updates at ~15fps.
         function drawBGRemoved(ctx, w, h) {
-            if (!S.segCanvas || S.segCanvas.width === 0) return;
-            var vw = S.segCanvas.width, vh = S.segCanvas.height;
+            if (!S.maskHighCanvas || S.maskHighCanvas.width === 0) return;
+            var vid = S.localVideo;
+            if (!vid || vid.readyState < 2) return;
+            var vw = vid.videoWidth || 640, vh = vid.videoHeight || 480;
+
+            // Lazy-init composite canvas
+            if (!S.compCanvas) {
+                S.compCanvas = document.createElement('canvas');
+                S.compCtx = S.compCanvas.getContext('2d');
+            }
+            if (S.compCanvas.width !== vw) {
+                S.compCanvas.width = vw; S.compCanvas.height = vh;
+            }
+            var cc = S.compCtx;
+
+            // Step 1: draw smoothed mask as alpha channel
+            cc.clearRect(0, 0, vw, vh);
+            cc.drawImage(S.maskHighCanvas, 0, 0);
+
+            // Step 2: use LIVE mirrored video wherever mask is white (source-in)
+            cc.globalCompositeOperation = 'source-in';
+            cc.save();
+            cc.translate(vw, 0); cc.scale(-1, 1); // mirror to match camera orientation
+            cc.drawImage(vid, 0, 0, vw, vh);
+            cc.restore();
+            cc.globalCompositeOperation = 'source-over';
+
+            // Step 3: draw composite onto main canvas, scaled to fill
             var scale = Math.max(w / vw, h / vh);
             var dw = vw * scale, dh = vh * scale;
-            ctx.drawImage(S.segCanvas, (w - dw) / 2, (h - dh) / 2, dw, dh);
+            ctx.drawImage(S.compCanvas, (w - dw) / 2, (h - dh) / 2, dw, dh);
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -2202,7 +2260,7 @@
             if (ts - S.lastFpsTime >= 1000) { S.fps = S.frameCount; S.frameCount = 0; S.lastFpsTime = ts; }
 
             drawBG(ctx, w, h, ts);
-            if (S.bgRemoval && S.segMask) drawBGRemoved(ctx, w, h);
+            if (S.bgRemoval && S.maskHighCanvas) drawBGRemoved(ctx, w, h);
             drawGrid(ctx);
             drawPDFOnCanvas(ctx); // PDF drawn on bg canvas = captured in recording
             drawContent(ctx, w, h);
