@@ -54,10 +54,12 @@
 </head>
 <body>
     <video id="localVideo" autoplay playsinline muted></video>
-    <div id="canvas-wrap" style="display:none;position:fixed;inset:0;">
-        <canvas id="bg-canvas" style="position:absolute;inset:0;z-index:0;"></canvas>
-        <canvas id="wb-canvas" style="position:absolute;inset:0;cursor:crosshair;z-index:46;"></canvas>
-    </div>
+    <!-- Background camera canvas: behind everything -->
+    <canvas id="bg-canvas" style="display:none;position:fixed;inset:0;z-index:1;"></canvas>
+    <!-- Whiteboard canvas: above PDF (z:45) but below PDF titlebar (z:47) and toolbar (z:50) -->
+    <canvas id="wb-canvas" style="display:none;position:fixed;inset:0;cursor:crosshair;z-index:46;"></canvas>
+    <!-- Wrap kept only to toggle show/hide both at once -->
+    <div id="canvas-wrap" style="display:none;"></div>
 
     <!-- Toolbar + Colors (built dynamically by JS) -->
     <div id="toolbar"></div>
@@ -2170,7 +2172,7 @@
             addBtn('\u2630', 'Menu', '', function() {
                 S.active = false;
                 S.tpActive = false; document.getElementById('teleprompter').style.display = 'none';
-                document.getElementById('canvas-wrap').style.display = 'none';
+                document.getElementById('bg-canvas').style.display='none'; document.getElementById('wb-canvas').style.display='none';
                 document.getElementById('setup').style.display = 'block';
                 tb.classList.remove('show');
                 document.getElementById('colors').classList.remove('show');
@@ -2378,7 +2380,7 @@
                 if (tpInput) S.tpText = tpInput.value || '';
 
                 document.getElementById('setup').style.display = 'none';
-                document.getElementById('canvas-wrap').style.display = 'block';
+                document.getElementById('bg-canvas').style.display='block'; document.getElementById('wb-canvas').style.display='block';
                 computeContentRect();
                 S.active = true;
                 document.getElementById('toolbar').classList.add('show');
@@ -2401,7 +2403,7 @@
             window.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape' && S.active) {
                     S.active = false;
-                    document.getElementById('canvas-wrap').style.display = 'none';
+                    document.getElementById('bg-canvas').style.display='none'; document.getElementById('wb-canvas').style.display='none';
                     document.getElementById('setup').style.display = 'block';
                     document.getElementById('toolbar').classList.remove('show');
                     document.getElementById('colors').classList.remove('show');
