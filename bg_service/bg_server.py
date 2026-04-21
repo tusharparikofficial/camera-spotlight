@@ -65,12 +65,27 @@ def preprocess(img: Image.Image) -> tuple[np.ndarray, tuple[int, int]]:
 
 
 def postprocess(mask: np.ndarray, orig_size: tuple[int, int]) -> bytes:
-    """Convert 1024x1024 mask output to PNG at original resolution."""
-    # mask shape: (1, 1, 1024, 1024)
+    """Convert 1024x1024 mask output to RGBA PNG where alpha = mask value.
+
+    Canvas API requires actual alpha channel for source-in compositing to work.
+    A grayscale PNG has alpha=255 everywhere (opaque black/white), which
+    breaks source-in. So we encode the mask into the alpha channel of white
+    RGBA pixels: where mask is high, alpha=255 (keep video); where low,
+    alpha=0 (transparent).
+    """
     m = mask[0, 0]
     m = (m - m.min()) / max(m.max() - m.min(), 1e-8)
     m = (m * 255).clip(0, 255).astype(np.uint8)
-    pil = Image.fromarray(m, mode="L").resize(orig_size, Image.BILINEAR)
+
+    h, w = m.shape
+    # Build RGBA: RGB=white, A=mask
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba[..., 0] = 255  # R
+    rgba[..., 1] = 255  # G
+    rgba[..., 2] = 255  # B
+    rgba[..., 3] = m    # A = mask
+
+    pil = Image.fromarray(rgba, mode="RGBA").resize(orig_size, Image.BILINEAR)
     buf = io.BytesIO()
     pil.save(buf, format="PNG", optimize=False, compress_level=1)
     return buf.getvalue()
